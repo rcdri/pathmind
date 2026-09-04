@@ -2,11 +2,21 @@ package com.pathmind.ai;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.google.gson.Gson;
 import com.pathmind.data.NodeGraphData;
 import com.pathmind.data.NodeGraphPersistence;
+import com.pathmind.nodes.Node;
+import com.pathmind.nodes.NodeConnection;
+import com.pathmind.validation.GraphValidationIssue;
+import com.pathmind.validation.GraphValidationResult;
+import com.pathmind.validation.GraphValidator;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /** Requests and parses proposals. Applying a proposal remains an explicit UI action. */
@@ -35,16 +45,10 @@ public final class AiPresetService {
     public static CompletableFuture<Proposal> request(AiProviderType provider, String model, String prompt,
                                                        boolean baritoneAvailable, boolean uiUtilsAvailable,
                                                        NodeGraphData activeGraph, String activePresetName, String conversation) {
-        String systemPrompt = AiPresetContextBuilder.systemPrompt(baritoneAvailable, uiUtilsAvailable);
-        systemPrompt += "\nThe currently open preset is '" + activePresetName + "'. Decide target yourself: use target \"current\" only when the user explicitly asks to modify, extend, fix, or change the open preset; use \"new\" for a requested standalone preset; use \"inspect\" for questions, diagnosis, explanations, or advice. "
-            + "For inspect, omit graph and explain the answer in response. For new/current, return a complete graph; current must preserve unrelated behavior. workLog is a concise, user-visible account of checks and decisions, never hidden reasoning. ACTIVE_PRESET_GRAPH=" + new Gson().toJson(activeGraph);
-        String audit = agentGraphAudit(activeGraph);
-        if (!audit.isBlank()) systemPrompt += "\nACTIVE_GRAPH_AUDIT (must be addressed for inspect requests): " + audit;
-        if (conversation != null && !conversation.isBlank()) systemPrompt += "\nConversation so far (honor the user's latest correction):\n" + conversation;
-        return AiProviderRegistry.configured(provider)
-            .orElseThrow(() -> new IllegalStateException("Configure and enable an AI provider in Settings first."))
-            .generate(new AiPresetRequest(systemPrompt, prompt, model))
-            .thenApply(AiPresetService::parseProposal);
+        AiProvider configured = AiProviderRegistry.configured(provider)
+            .orElseThrow(() -> new IllegalStateException("Configure and enable an AI provider in Settings first."));
+        return AiPresetAgent.run(configured, model, prompt, conversation, activeGraph, activePresetName,
+            baritoneAvailable, uiUtilsAvailable);
     }
 
     public static Proposal parseProposal(String content) {
@@ -53,7 +57,7 @@ public final class AiPresetService {
         if (!target.equals("new") && !target.equals("current") && !target.equals("inspect")) target = "new";
         NodeGraphData graph = null;
         if (!target.equals("inspect")) {
-            if (!response.has("graph")) throw new IllegalArgumentException("AI response did not include a graph.");
+            if (!response.has("graph") || response.get("graph").isJsonNull()) throw new IllegalArgumentException("AI response did not include a graph.");
             graph = NodeGraphPersistence.parseNodeGraphData(response.get("graph").toString());
             if (graph == null) throw new IllegalArgumentException("AI returned an unreadable graph.");
         }
@@ -64,20 +68,38 @@ public final class AiPresetService {
         return new Proposal(string(response, "title", "Untitled AI preset"), shortText(string(response, "response", string(response, "description", "")), 280), workLog, graph, target);
     }
 
-    /** Small semantic guard for control-node mistakes that generic graph validation cannot infer. */
-    public static String agentGraphAudit(NodeGraphData graph) {
-        if (graph == null || graph.getNodes() == null) return "";
-        java.util.Map<String, NodeGraphData.NodeData> nodes = new java.util.HashMap<>();
-        for (NodeGraphData.NodeData node : graph.getNodes()) if (node != null && node.getId() != null) nodes.put(node.getId(), node);
-        java.util.List<String> issues = new ArrayList<>();
-        for (NodeGraphData.NodeData node : nodes.values()) {
-            if (node.getType() != com.pathmind.nodes.NodeType.CONTROL_REPEAT) continue;
-            String actionId = node.getAttachedActionId();
-            NodeGraphData.NodeData action = actionId == null ? null : nodes.get(actionId);
-            if (action == null) issues.add("Repeat " + node.getId() + " has no attached repeat-body action.");
-            else if (!node.getId().equals(action.getParentActionControlId())) issues.add("Repeat " + node.getId() + " and action " + actionId + " do not have matching action attachment ids.");
+    /** Runs lossless serialized checks before the normal runtime validator. */
+    public static Validation validateProposal(Proposal proposal, String activePreset, boolean baritoneAvailable, boolean uiUtilsAvailable) {
+        if (proposal == null || !proposal.changesGraph()) return Validation.success();
+        List<ValidationIssue> issues = new ArrayList<>();
+        for (String message : AiGraphIntegrityValidator.validate(proposal.graph(), baritoneAvailable, uiUtilsAvailable)) {
+            issues.add(new ValidationIssue("error", "serialized_integrity", null, null, message));
         }
-        return String.join(" ", issues);
+        if (!issues.isEmpty()) return new Validation(false, limited(issues));
+        try {
+            List<Node> nodes = NodeGraphPersistence.convertToNodes(proposal.graph());
+            Map<String, Node> byId = new HashMap<>();
+            for (Node node : nodes) if (node != null) byId.put(node.getId(), node);
+            List<NodeConnection> connections = NodeGraphPersistence.convertToConnections(proposal.graph(), byId);
+            String presetName = proposal.editsCurrentPreset() ? activePreset : proposal.title();
+            GraphValidationResult result = GraphValidator.validate(nodes, connections, presetName,
+                baritoneAvailable, uiUtilsAvailable, proposal.graph().getRoutines(), "");
+            for (GraphValidationIssue issue : result.getIssues()) {
+                issues.add(new ValidationIssue(issue.getSeverity().name().toLowerCase(java.util.Locale.ROOT),
+                    issue.getCode(), issue.getNodeId(), issue.getRoutineId(), issue.getMessage()));
+            }
+        } catch (RuntimeException exception) {
+            issues.add(new ValidationIssue("error", "graph_conversion", null, null,
+                exception.getMessage() == null ? "The graph could not be converted." : exception.getMessage()));
+        }
+        boolean valid = issues.stream().noneMatch(ValidationIssue::isError);
+        return issues.isEmpty() ? Validation.success() : new Validation(valid, limited(issues));
+    }
+
+    private static List<ValidationIssue> limited(List<ValidationIssue> issues) {
+        List<ValidationIssue> ordered = new ArrayList<>(issues);
+        ordered.sort(java.util.Comparator.comparing(ValidationIssue::isError).reversed());
+        return List.copyOf(ordered.subList(0, Math.min(12, ordered.size())));
     }
 
     private static String shortText(String value, int limit) {
@@ -97,8 +119,40 @@ public final class AiPresetService {
         return firstNewline >= 0 && lastFence > firstNewline ? trimmed.substring(firstNewline + 1, lastFence).trim() : trimmed;
     }
 
-    public record Proposal(String title, String response, List<String> workLog, NodeGraphData graph, String target) {
+    public static String graphFingerprint(String presetName, NodeGraphData graph) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            String serialized = (presetName == null ? "" : presetName) + "\n" + new com.google.gson.Gson().toJson(graph);
+            return HexFormat.of().formatHex(digest.digest(serialized.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable.", exception);
+        }
+    }
+
+    public static boolean matchesSource(Proposal proposal, String presetName, NodeGraphData graph) {
+        return proposal != null && proposal.editsCurrentPreset()
+            && proposal.sourceFingerprint() != null && !proposal.sourceFingerprint().isBlank()
+            && proposal.sourceFingerprint().equals(graphFingerprint(presetName, graph));
+    }
+
+    public record Proposal(String title, String response, List<String> workLog, NodeGraphData graph, String target,
+                           String sourceFingerprint, AiProposalReview review) {
+        public Proposal(String title, String response, List<String> workLog, NodeGraphData graph, String target) {
+            this(title, response, workLog, graph, target, "", null);
+        }
         public boolean editsCurrentPreset() { return "current".equals(target); }
         public boolean changesGraph() { return "new".equals(target) || "current".equals(target); }
+    }
+
+    public record ValidationIssue(String severity, String code, String nodeId, String routineId, String message) {
+        public boolean isError() { return "error".equals(severity); }
+    }
+
+    public record Validation(boolean valid, List<ValidationIssue> issues) {
+        public static Validation success() { return new Validation(true, List.of()); }
+        public String summary() {
+            if (issues.isEmpty()) return "";
+            return issues.stream().map(ValidationIssue::message).collect(java.util.stream.Collectors.joining(" "));
+        }
     }
 }

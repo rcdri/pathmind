@@ -36,7 +36,8 @@ public final class AiProviderRegistry {
         return Optional.of(switch (provider) {
             case ANTHROPIC -> new AnthropicProvider(endpoint, key);
             case GEMINI -> new GeminiProvider(endpoint, key);
-            case OPENAI, OPENAI_COMPATIBLE -> new OpenAiCompatibleProvider(endpoint, key);
+            case OPENAI -> OpenAiCompatibleProvider.officialOpenAi(endpoint, key);
+            case OPENAI_COMPATIBLE -> new OpenAiCompatibleProvider(endpoint, key);
         });
     }
 

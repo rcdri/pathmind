@@ -251,7 +251,12 @@ public class PathmindVisualEditorScreen extends Screen {
                 .whenComplete((proposal, throwable) -> {
                     Runnable update = () -> {
                         if (throwable != null) failure.accept(throwable.getCause() == null ? throwable.getMessage() : throwable.getCause().getMessage());
-                        else success.accept(proposal);
+                        else {
+                            AiPresetService.Validation validation = AiPresetService.validateProposal(proposal,
+                                presetWorkspaceController.activePresetName(), baritoneAvailable, uiUtilsAvailable);
+                            if (!validation.valid()) failure.accept("Invalid AI proposal: " + validation.summary());
+                            else success.accept(proposal);
+                        }
                     };
                     if (minecraft != null) minecraft.execute(update); else update.run();
                 });
@@ -3462,9 +3467,9 @@ public class PathmindVisualEditorScreen extends Screen {
         if (proposal == null || proposal.graph() == null) {
             return "Error: the AI response is empty.";
         }
-        supplyMissingWalkInputs(proposal.graph());
-        String agentAudit = AiPresetService.agentGraphAudit(proposal.graph());
-        if (!agentAudit.isBlank()) return "Error: the generated graph is invalid: " + agentAudit;
+        AiPresetService.Validation proposalValidation = AiPresetService.validateProposal(proposal,
+            presetWorkspaceController.activePresetName(), baritoneAvailable, uiUtilsAvailable);
+        if (!proposalValidation.valid()) return "Error: the generated graph is invalid: " + proposalValidation.summary();
         String requestedName = proposal.title() == null || proposal.title().isBlank() ? "AI Preset" : proposal.title();
         java.util.Optional<String> created = PresetManager.createPreset(requestedName);
         int suffix = 2;
@@ -3477,17 +3482,6 @@ public class PathmindVisualEditorScreen extends Screen {
         // Make the new preset visible first; the generated graph is then written into this open preset.
         refreshAvailablePresets();
         switchPreset(created.get());
-        List<Node> nodes = NodeGraphPersistence.convertToNodes(proposal.graph());
-        Map<String, Node> byId = new HashMap<>();
-        for (Node node : nodes) {
-            if (node != null) byId.put(node.getId(), node);
-        }
-        List<com.pathmind.nodes.NodeConnection> connections = NodeGraphPersistence.convertToConnections(proposal.graph(), byId);
-        GraphValidationResult validation = GraphValidator.validate(nodes, connections, proposal.title(), baritoneAvailable, uiUtilsAvailable,
-            proposal.graph().getRoutines() == null ? List.of() : proposal.graph().getRoutines(), "");
-        if (validation.hasErrors()) {
-            return "Error: created " + created.get() + ", but could not write it: " + validation.getIssues().get(0).getMessage();
-        }
         if (!NodeGraphPersistence.saveNodeGraphDataForPreset(created.get(), proposal.graph())) {
             return "Error: created " + created.get() + ", but could not write the generated graph.";
         }
@@ -3502,51 +3496,18 @@ public class PathmindVisualEditorScreen extends Screen {
 
     private String applyAiEditToActivePreset(AiPresetService.Proposal proposal) {
         if (proposal == null || proposal.graph() == null) return "Error: the AI response is empty.";
-        supplyMissingWalkInputs(proposal.graph());
-        String agentAudit = AiPresetService.agentGraphAudit(proposal.graph());
-        if (!agentAudit.isBlank()) return "Error: the generated graph is invalid: " + agentAudit;
-        List<Node> nodes = NodeGraphPersistence.convertToNodes(proposal.graph());
-        Map<String, Node> byId = new HashMap<>();
-        for (Node node : nodes) if (node != null) byId.put(node.getId(), node);
-        List<com.pathmind.nodes.NodeConnection> connections = NodeGraphPersistence.convertToConnections(proposal.graph(), byId);
+        if (!AiPresetService.matchesSource(proposal, presetWorkspaceController.activePresetName(),
+            nodeGraph.exportGraphDataSnapshot())) {
+            return "Error: the preset changed after this proposal started. Discard it and ask AI again.";
+        }
+        AiPresetService.Validation proposalValidation = AiPresetService.validateProposal(proposal,
+            presetWorkspaceController.activePresetName(), baritoneAvailable, uiUtilsAvailable);
+        if (!proposalValidation.valid()) return "Error: the generated graph is invalid: " + proposalValidation.summary();
         String activePreset = presetWorkspaceController.activePresetName();
-        GraphValidationResult validation = GraphValidator.validate(nodes, connections, activePreset, baritoneAvailable, uiUtilsAvailable,
-            proposal.graph().getRoutines() == null ? List.of() : proposal.graph().getRoutines(), "");
-        if (validation.hasErrors()) return "Error: could not update " + activePreset + ": " + validation.getIssues().get(0).getMessage();
         if (!nodeGraph.applyGraphDataSnapshot(proposal.graph(), true) || !saveRootPresetWorkspace()) return "Error: could not apply the update.";
         resetWorkspaceTabsFromCurrentGraph();
         return "Updated " + activePreset + ".";
     }
-
-    /** Repairs the two mandatory Walk attachments when an otherwise valid AI graph omits them. */
-    private void supplyMissingWalkInputs(NodeGraphData graph) {
-        if (graph == null || graph.getNodes() == null) return;
-        java.util.Set<String> ids = new java.util.HashSet<>();
-        for (NodeGraphData.NodeData node : graph.getNodes()) if (node != null && node.getId() != null) ids.add(node.getId());
-        java.util.List<NodeGraphData.NodeData> additions = new java.util.ArrayList<>();
-        for (NodeGraphData.NodeData walk : graph.getNodes()) {
-            if (walk == null || walk.getType() != NodeType.WALK) continue;
-            java.util.List<NodeGraphData.ParameterAttachmentData> attachments = walk.getParameterAttachments();
-            if (attachments == null) { attachments = new java.util.ArrayList<>(); walk.setParameterAttachments(attachments); }
-            if (!hasAttachment(attachments, 0)) {
-                String id = uniqueAiNodeId(ids, walk.getId() + "-direction");
-                additions.add(aiParameterNode(id, NodeType.PARAM_DIRECTION, null, walk.getId(), walk.getX() + 10, walk.getY() + 60,
-                    new String[][]{{"direction_mode", "Mode", "cardinal", "STRING"}, {"direction_cardinal", "Direction", "north", "STRING"}}));
-                attachments.add(new NodeGraphData.ParameterAttachmentData(0, id));
-            }
-            if (!hasAttachment(attachments, 1)) {
-                String id = uniqueAiNodeId(ids, walk.getId() + "-duration");
-                additions.add(aiParameterNode(id, NodeType.PARAM_DURATION, NodeMode.WAIT_SECONDS, walk.getId(), walk.getX() + 10, walk.getY() + 120,
-                    new String[][]{{"duration", "Duration", "1.0", "DOUBLE"}}));
-                attachments.add(new NodeGraphData.ParameterAttachmentData(1, id));
-            }
-        }
-        graph.getNodes().addAll(additions);
-    }
-
-    private static boolean hasAttachment(java.util.List<NodeGraphData.ParameterAttachmentData> attachments, int slot) { return attachments.stream().anyMatch(attachment -> attachment != null && attachment.getSlotIndex() == slot && attachment.getParameterNodeId() != null && !attachment.getParameterNodeId().isBlank()); }
-    private static String uniqueAiNodeId(java.util.Set<String> ids, String base) { String id = base; int suffix = 2; while (!ids.add(id)) id = base + "-" + suffix++; return id; }
-    private static NodeGraphData.NodeData aiParameterNode(String id, NodeType type, NodeMode mode, String parent, int x, int y, String[][] values) { NodeGraphData.NodeData node = new NodeGraphData.NodeData(id, type, mode, x, y, new java.util.ArrayList<>()); node.setParentParameterHostId(parent); for (String[] value : values) { NodeGraphData.ParameterData parameter = new NodeGraphData.ParameterData(value[1], value[2], value[3]); parameter.setId(value[0]); parameter.setUserEdited(true); node.getParameters().add(parameter); } return node; }
 
     private void renderWorkspaceButtons(GuiGraphics context, int mouseX, int mouseY) {
         if (isPopupObscuringWorkspace()) {
