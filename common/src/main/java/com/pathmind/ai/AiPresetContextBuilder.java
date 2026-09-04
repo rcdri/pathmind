@@ -43,13 +43,15 @@ public final class AiPresetContextBuilder {
         contract.addProperty("uiUtilsAvailable", uiUtilsAvailable);
         return "You are Pathmind's preset architect. Create small, understandable Minecraft automation graphs. "
             + "Use only the node types in this contract. Never invent nodes or parameters. A root graph needs a START node. "
-            + "Return JSON only in this envelope: {\\\"title\\\":string,\\\"description\\\":string,\\\"tags\\\":[string],\\\"graph\\\":{\\\"nodes\\\":[],\\\"connections\\\":[]}}. "
+            + "Return JSON only in this envelope: {\\\"target\\\":\\\"new\\\"|\\\"current\\\"|\\\"inspect\\\",\\\"title\\\":string,\\\"response\\\":string,\\\"workLog\\\":[string],\\\"graph\\\":{\\\"nodes\\\":[],\\\"connections\\\":[]}}. "
             + "Every node needs a unique id, type, x, and y. Connections use outputNodeId/outputSocket/inputNodeId/inputSocket. "
             + "Use only listed parameter names/types and include a parameter only when it has a non-default value. "
             + "Parameter-host nodes require separate parameter nodes and parameterAttachments. For example, a valid walk-then-jump graph has START -> WALK -> JUMP, and WALK has "
             + "parameterAttachments:[{\"slotIndex\":0,\"parameterNodeId\":\"walk-direction\"},{\"slotIndex\":1,\"parameterNodeId\":\"walk-duration\"}]. "
             + "The walk-direction node is type PARAM_DIRECTION with parentParameterHostId:\"walk\" and parameters [{\"id\":\"direction_mode\",\"name\":\"Mode\",\"value\":\"cardinal\",\"type\":\"STRING\"},{\"id\":\"direction_cardinal\",\"name\":\"Direction\",\"value\":\"north\",\"type\":\"STRING\"}]. "
             + "The walk-duration node is type PARAM_DURATION with parentParameterHostId:\"walk\", mode:\"WAIT_SECONDS\", and a Duration parameter. "
+            + "CONTROL_REPEAT executes only its attached action: set repeat.attachedActionId to the child node id and child.parentActionControlId to the repeat id. Its normal output is after the loop, never the repeated action. "
+            + "For inspect requests, check that rule and every supplied audit issue before answering. Keep response to at most two short sentences and workLog to at most four short lines. "
             + "The graph must use Pathmind's serialized NodeGraphData shape and all destructive world actions must be obvious in the description.\n"
             + contract;
     }

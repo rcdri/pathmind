@@ -244,10 +244,10 @@ public class PathmindVisualEditorScreen extends Screen {
 
     private final class AiPopupHost implements PathmindAiPopupController.Host {
         @Override
-        public void requestAiProposal(AiProviderType provider, String prompt, java.util.function.Consumer<AiPresetService.Proposal> success,
+        public void requestAiProposal(AiProviderType provider, String prompt, String conversation, java.util.function.Consumer<AiPresetService.Proposal> success,
                                       java.util.function.Consumer<String> failure) {
             String model = AiProviderRegistry.config(provider).model;
-            AiPresetService.request(provider, model, prompt, baritoneAvailable, uiUtilsAvailable)
+            AiPresetService.request(provider, model, prompt, baritoneAvailable, uiUtilsAvailable, nodeGraph.exportGraphDataSnapshot(), presetWorkspaceController.activePresetName(), conversation)
                 .whenComplete((proposal, throwable) -> {
                     Runnable update = () -> {
                         if (throwable != null) failure.accept(throwable.getCause() == null ? throwable.getMessage() : throwable.getCause().getMessage());
@@ -258,9 +258,12 @@ public class PathmindVisualEditorScreen extends Screen {
         }
 
         @Override
-        public String createAndWriteAiPreset(AiPresetService.Proposal proposal) {
-            return PathmindVisualEditorScreen.this.createAndWriteAiPreset(proposal);
+        public String applyAiProposal(AiPresetService.Proposal proposal) {
+            return proposal.editsCurrentPreset() ? PathmindVisualEditorScreen.this.applyAiEditToActivePreset(proposal) : PathmindVisualEditorScreen.this.createAndWriteAiPreset(proposal);
         }
+
+        @Override public String activePresetName() { return presetWorkspaceController.activePresetName(); }
+        @Override public NodeGraphData activeGraph() { return nodeGraph.exportGraphDataSnapshot(); }
 
         @Override
         public void showAiError(String message) {
@@ -3459,6 +3462,9 @@ public class PathmindVisualEditorScreen extends Screen {
         if (proposal == null || proposal.graph() == null) {
             return "Error: the AI response is empty.";
         }
+        supplyMissingWalkInputs(proposal.graph());
+        String agentAudit = AiPresetService.agentGraphAudit(proposal.graph());
+        if (!agentAudit.isBlank()) return "Error: the generated graph is invalid: " + agentAudit;
         String requestedName = proposal.title() == null || proposal.title().isBlank() ? "AI Preset" : proposal.title();
         java.util.Optional<String> created = PresetManager.createPreset(requestedName);
         int suffix = 2;
@@ -3468,7 +3474,6 @@ public class PathmindVisualEditorScreen extends Screen {
         if (created.isEmpty()) {
             return "Error: could not create the generated preset.";
         }
-        supplyMissingWalkInputs(proposal.graph());
         // Make the new preset visible first; the generated graph is then written into this open preset.
         refreshAvailablePresets();
         switchPreset(created.get());
@@ -3493,6 +3498,24 @@ public class PathmindVisualEditorScreen extends Screen {
         }
         resetWorkspaceTabsFromCurrentGraph();
         return "Created " + created.get() + ".";
+    }
+
+    private String applyAiEditToActivePreset(AiPresetService.Proposal proposal) {
+        if (proposal == null || proposal.graph() == null) return "Error: the AI response is empty.";
+        supplyMissingWalkInputs(proposal.graph());
+        String agentAudit = AiPresetService.agentGraphAudit(proposal.graph());
+        if (!agentAudit.isBlank()) return "Error: the generated graph is invalid: " + agentAudit;
+        List<Node> nodes = NodeGraphPersistence.convertToNodes(proposal.graph());
+        Map<String, Node> byId = new HashMap<>();
+        for (Node node : nodes) if (node != null) byId.put(node.getId(), node);
+        List<com.pathmind.nodes.NodeConnection> connections = NodeGraphPersistence.convertToConnections(proposal.graph(), byId);
+        String activePreset = presetWorkspaceController.activePresetName();
+        GraphValidationResult validation = GraphValidator.validate(nodes, connections, activePreset, baritoneAvailable, uiUtilsAvailable,
+            proposal.graph().getRoutines() == null ? List.of() : proposal.graph().getRoutines(), "");
+        if (validation.hasErrors()) return "Error: could not update " + activePreset + ": " + validation.getIssues().get(0).getMessage();
+        if (!nodeGraph.applyGraphDataSnapshot(proposal.graph(), true) || !saveRootPresetWorkspace()) return "Error: could not apply the update.";
+        resetWorkspaceTabsFromCurrentGraph();
+        return "Updated " + activePreset + ".";
     }
 
     /** Repairs the two mandatory Walk attachments when an otherwise valid AI graph omits them. */

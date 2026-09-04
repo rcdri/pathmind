@@ -22,8 +22,10 @@ import org.lwjgl.glfw.GLFW;
 /** A resizable, non-modal AI workspace that stays alongside the graph editor. */
 final class PathmindAiPopupController {
     interface Host {
-        void requestAiProposal(AiProviderType provider, String prompt, Consumer<AiPresetService.Proposal> success, Consumer<String> failure);
-        String createAndWriteAiPreset(AiPresetService.Proposal proposal);
+        void requestAiProposal(AiProviderType provider, String prompt, String conversation, Consumer<AiPresetService.Proposal> success, Consumer<String> failure);
+        String applyAiProposal(AiPresetService.Proposal proposal);
+        String activePresetName();
+        com.pathmind.data.NodeGraphData activeGraph();
         void showAiError(String message);
     }
     private enum View { CHAT, SETTINGS }
@@ -43,6 +45,8 @@ final class PathmindAiPopupController {
     private int promptCursor, promptScrollLine, promptAnchor, promptDragAnchor, thinkingScrollOffset;
     private boolean promptSelecting;
     private long requestStartedAt;
+    private final java.util.EnumMap<AiProviderType, java.util.List<ChatLine>> conversationHistory = new java.util.EnumMap<>(AiProviderType.class);
+    private int conversationGeneration;
 
     PathmindAiPopupController(Host host) { this.host = host; }
     boolean isVisible() { return visible; }
@@ -89,7 +93,10 @@ final class PathmindAiPopupController {
         int composerHeight = COMPOSER_LINES * (f.lineHeight + 1) + 12;
         int composerY = y + height - composerHeight - 12;
         String headline = connected ? "Describe the preset you want to build" : "Configure " + provider.displayName() + " to begin";
-        if (!requesting) drawCenteredWrapped(c, f, headline, x + width / 2, y + HEADER + 24, width - 24, 2, UITheme.TEXT_TERTIARY);
+        renderClearContextButton(c, f, mouseX, mouseY, accent);
+        if (!requesting && requestStartedAt == 0) {
+            drawCenteredWrapped(c, f, headline, x + width / 2, y + HEADER + 24, width - 24, 2, UITheme.TEXT_TERTIARY);
+        }
         if (requesting || requestStartedAt > 0) renderThinking(c, f, composerY - 10);
         else if (!status.isBlank()) renderActivity(c, f, status.startsWith("Error") ? "Error" : "Result", status, composerY - 18, status.startsWith("Error") ? UITheme.STATE_ERROR : UITheme.TEXT_SECONDARY);
         c.fill(x + 10, composerY, x + width - 10, composerY + composerHeight, UITheme.BACKGROUND_PRIMARY);
@@ -112,6 +119,13 @@ final class PathmindAiPopupController {
         int actionX = x + width - 48;
         UIStyleHelper.drawBeveledPanel(c, actionX, composerY + 5, 32, composerHeight - 10, accent, UITheme.BORDER_HIGHLIGHT, UITheme.PANEL_INNER_BORDER);
         c.drawCenteredString(f, Component.literal(action), actionX + 16, composerY + composerHeight / 2 - f.lineHeight / 2, UITheme.TEXT_HEADER);
+    }
+
+    private void renderClearContextButton(GuiGraphics c, Font f, int mouseX, int mouseY, int accent) {
+        int bx = x + 12, by = y + HEADER + 4, bw = 54;
+        boolean hovered = contains(mouseX, mouseY, bx, by, bw, 13);
+        UIStyleHelper.drawToolbarButtonFrame(c, bx, by, bw, 13, UITheme.BUTTON_DEFAULT_BG, hovered ? accent : UITheme.BORDER_DEFAULT, UITheme.PANEL_INNER_BORDER);
+        c.drawCenteredString(f, Component.literal("Clear"), bx + bw / 2, by + 3, hovered ? UITheme.TEXT_PRIMARY : UITheme.TEXT_SECONDARY);
     }
 
     private void renderSettings(GuiGraphics c, Font f, int mouseX, int mouseY, int accent) {
@@ -152,6 +166,7 @@ final class PathmindAiPopupController {
         for (AiProviderType candidate : supportedProviders()) { int tabWidth = tabLabel(candidate).length() * 6 + 14; if (contains(mouseX, mouseY, tabX, y + 3, tabWidth, HEADER - 4)) { selectProvider(candidate); return true; } tabX += tabWidth + 2; }
         int composerHeight = COMPOSER_LINES * ((currentFont == null ? 9 : currentFont.lineHeight) + 1) + 12;
         int composerY = y + height - composerHeight - 12;
+        if (contains(mouseX, mouseY, x + 12, y + HEADER + 4, 54, 13)) { clearConversation(); return true; }
         if (contains(mouseX, mouseY, x + 10, composerY, width - 20, composerHeight)) { if (mouseX >= x + width - 48) activateAction(); else { activeField = Field.PROMPT; replaceOnType = false; promptCursor = promptIndexAt(mouseX, mouseY, composerY); promptAnchor = promptCursor; promptDragAnchor = promptCursor; promptSelecting = true; } return true; }
         dragging = true; dragOffsetX = mouseX - x; dragOffsetY = mouseY - y; return true;
     }
@@ -213,8 +228,28 @@ final class PathmindAiPopupController {
         if (prompt.isBlank()) { reportError("Describe the preset first."); return; }
         if (AiProviderRegistry.configured(provider).isEmpty()) { view = View.SETTINGS; reportError("Configure " + provider.displayName() + " first."); return; }
         requesting = true; status = ""; thinkingScrollOffset = 0; requestStartedAt = System.currentTimeMillis();
-        host.requestAiProposal(provider, prompt, value -> { requesting = false; status = host.createAndWriteAiPreset(value); if (status.startsWith("Error")) host.showAiError(status); }, error -> { requesting = false; reportError(error); });
+        String submittedPrompt = prompt;
+        int requestGeneration = conversationGeneration;
+        history(provider).add(new ChatLine("You: " + submittedPrompt, UITheme.TEXT_SECONDARY));
+        prompt = ""; promptCursor = 0; promptAnchor = 0; promptScrollLine = 0;
+        AiProviderType requestProvider = provider;
+        host.requestAiProposal(provider, submittedPrompt, conversationContext(), value -> {
+            if (requestGeneration != conversationGeneration) return;
+            requesting = false;
+            if (value.workLog() != null) for (String line : value.workLog()) if (line != null && !line.isBlank()) history(requestProvider).add(new ChatLine("· " + line, UITheme.TEXT_TERTIARY));
+            if (value.changesGraph()) {
+                String result = host.applyAiProposal(value);
+                if (result.startsWith("Error")) { reportError(result); return; }
+                history(requestProvider).add(new ChatLine("· " + result, UITheme.TEXT_SECONDARY));
+            }
+            String response = value.response() == null || value.response().isBlank() ? (value.editsCurrentPreset() ? "I updated the current preset." : value.changesGraph() ? "I created a new preset." : "I reviewed the current preset.") : value.response();
+            history(requestProvider).add(new ChatLine("AI: " + response, UITheme.TEXT_PRIMARY));
+        }, error -> { if (requestGeneration != conversationGeneration) return; requesting = false; reportError(error); });
     }
+    private void clearConversation() { conversationGeneration++; history().clear(); prompt = ""; promptCursor = promptAnchor = promptScrollLine = 0; status = ""; requestStartedAt = 0; requesting = false; activeField = Field.NONE; }
+    private java.util.List<ChatLine> history() { return history(provider); }
+    private java.util.List<ChatLine> history(AiProviderType type) { return conversationHistory.computeIfAbsent(type, unused -> new java.util.ArrayList<>()); }
+    private String conversationContext() { StringBuilder out = new StringBuilder(); for (ChatLine line : history()) out.append(line.text()).append('\n'); return out.toString(); }
     private void saveConfiguration() {
         if (apiKey.isBlank() && !com.pathmind.ai.AiSecretStore.hasSecret(provider)) { status = "Error: enter an API key."; return; }
         AiProviderRegistry.saveConfiguration(provider, true, model, provider.defaultEndpoint(), apiKey.isBlank() ? null : apiKey);
@@ -223,7 +258,7 @@ final class PathmindAiPopupController {
     private void reportError(String message) { status = "Error: " + (message == null || message.isBlank() ? "AI request failed." : message); host.showAiError(status); }
     private void renderThinking(GuiGraphics c, Font f, int bottomY) {
         java.util.List<ThinkingLine> rows = thinkingLines(f);
-        int topY = y + HEADER + 18;
+        int topY = y + HEADER + 22;
         int rowHeight = f.lineHeight + 3;
         int visibleCount = Math.max(1, (bottomY - topY) / rowHeight);
         int total = rows.size();
@@ -239,13 +274,20 @@ final class PathmindAiPopupController {
             c.drawString(f, Component.literal(row.text()), x + 16, lineY, row.color());
         }
         c.disableScissor();
-        DropdownLayoutHelper.drawScrollBar(c, x + 8, topY, width - 16, bottomY - topY, total, visibleCount, thinkingScrollOffset, maxScroll, UITheme.BACKGROUND_TERTIARY, UITheme.BORDER_HIGHLIGHT);
+        DropdownLayoutHelper.drawScrollBar(c, x + 8, topY, width - 16, bottomY - topY, total, visibleCount, maxScroll - thinkingScrollOffset, maxScroll, UITheme.BACKGROUND_TERTIARY, UITheme.BORDER_HIGHLIGHT);
     }
     private void renderActivity(GuiGraphics c, Font f, String label, String message, int bottomY, int color) { int topY = Math.max(y + HEADER + 58, bottomY - 3 * (f.lineHeight + 3)); c.drawString(f, Component.literal(label), x + 12, topY, color); drawWrapped(c, f, message, x + 16, topY + f.lineHeight + 3, width - 32, 2, color); }
     private record ThinkingLine(String text, int color) { }
-    private java.util.List<ThinkingLine> thinkingLines(Font font) { String[] stages = {"· Reading workspace context", "· Planning the preset", "· Building the node graph", "· Validating the preset"}; int current = requesting ? (int) Math.min(stages.length - 1, Math.max(0, (System.currentTimeMillis() - requestStartedAt) / 1200L)) : stages.length - 1; java.util.List<ThinkingLine> result = new java.util.ArrayList<>(); for (int i = 0; i <= current; i++) result.add(new ThinkingLine((requesting && i == current ? "› " + stages[i].substring(2) + "…" : stages[i]), requesting && i == current ? UITheme.TEXT_PRIMARY : UITheme.TEXT_TERTIARY)); if (status.startsWith("Error")) for (TextLine line : lineSegments(font, status, Math.max(24, width - 38))) result.add(new ThinkingLine(line.text(), UITheme.STATE_ERROR)); return result; }
+    private record ChatLine(String text, int color) { }
+    private java.util.List<ThinkingLine> thinkingLines(Font font) {
+        java.util.List<ThinkingLine> result = new java.util.ArrayList<>();
+        for (ChatLine chatLine : history()) for (TextLine line : lineSegments(font, chatLine.text(), Math.max(24, width - 38))) result.add(new ThinkingLine(line.text(), chatLine.color()));
+        if (requesting) result.add(new ThinkingLine("› Requesting " + provider.displayName() + "…", UITheme.TEXT_PRIMARY));
+        if (status.startsWith("Error")) for (TextLine line : lineSegments(font, status, Math.max(24, width - 38))) result.add(new ThinkingLine(line.text(), UITheme.STATE_ERROR));
+        return result;
+    }
     boolean mouseScrolled(int mouseX, int mouseY, double amount) { if (!visible || requestStartedAt <= 0 || currentFont == null || amount == 0.0) return false; int composerHeight = COMPOSER_LINES * (currentFont.lineHeight + 1) + 12; int topY = y + HEADER + 18, bottomY = y + height - composerHeight - 22; if (!contains(mouseX, mouseY, x + 8, topY, width - 16, Math.max(0, bottomY - topY))) return false; int visibleCount = Math.max(1, (bottomY - topY) / (currentFont.lineHeight + 3)); thinkingScrollOffset = clamp(thinkingScrollOffset + (amount > 0 ? 1 : -1), 0, Math.max(0, thinkingLines(currentFont).size() - visibleCount)); return true; }
-    private void selectProvider(AiProviderType next) { provider = next; apiKey = ""; model = configuredModel(); modelDropdownOpen = false; activeField = Field.NONE; replaceOnType = false; }
+    private void selectProvider(AiProviderType next) { if (next != provider) { conversationGeneration++; requesting = false; requestStartedAt = 0; status = ""; prompt = ""; promptCursor = promptAnchor = promptScrollLine = 0; } provider = next; apiKey = ""; model = configuredModel(); modelDropdownOpen = false; activeField = Field.NONE; replaceOnType = false; }
     private void type(char character) { if (replaceOnType) clearField(); replaceOnType = false; if (activeField == Field.KEY && apiKey.length() < 512) apiKey += character; else if (activeField == Field.PROMPT) insertPromptText(String.valueOf(character)); }
     private void backspace() { if (replaceOnType) { clearField(); return; } if (activeField == Field.KEY && !apiKey.isEmpty()) apiKey = apiKey.substring(0, apiKey.length() - 1); else if (activeField == Field.PROMPT) { if (promptAnchor != promptCursor) deletePromptSelection(); else if (promptCursor > 0) { prompt = prompt.substring(0, promptCursor - 1) + prompt.substring(promptCursor); promptCursor--; promptAnchor = promptCursor; } } }
     private void clearField() { if (activeField == Field.KEY) apiKey = ""; else if (activeField == Field.PROMPT) { prompt = ""; promptCursor = 0; promptScrollLine = 0; } replaceOnType = false; }
