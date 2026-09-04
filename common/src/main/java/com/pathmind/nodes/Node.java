@@ -794,12 +794,7 @@ public class Node {
     }
 
     public boolean canAcceptParameterNode(Node parameterNode, int slotIndex) {
-        // Editor attachment is unrestricted by slot trait: any node usable as a parameter may be
-        // dropped into any existing parameter slot. Runtime value validation stays strict elsewhere.
-        return parameterNode != null
-            && parameterNode != this
-            && canAcceptParameterAt(slotIndex)
-            && isUsableAsParameterType(parameterNode.getType());
+        return NodeCompatibility.canAttachToSlot(this, parameterNode, NodeSlotType.PARAMETER, slotIndex);
     }
 
     public boolean isParameterSlotRequired(int slotIndex) {

@@ -239,7 +239,20 @@ public final class PathmindWorkspaceChrome {
     }
 
     public static void drawSettingsIcon(GuiGraphics context, int buttonX, int buttonY, int buttonSize, int color) {
-        PathmindIconRenderer.drawSettings(context, buttonX, buttonY, buttonSize, color, UITheme.GRID_ORIGIN);
+        PathmindIconRenderer.drawSettings(context, buttonX, buttonY, buttonSize, color, UITheme.BACKGROUND_SECTION);
+    }
+
+    public static void drawSparkleIcon(GuiGraphics context, int buttonX, int buttonY, int buttonSize, int color) {
+        int centerX = buttonX + buttonSize / 2;
+        int centerY = buttonY + buttonSize / 2;
+        // A deliberately small, pixel-sharp four-point diamond sparkle.
+        context.hLine(centerX, centerX, centerY - 4, color);
+        context.hLine(centerX - 1, centerX + 1, centerY - 3, color);
+        context.hLine(centerX - 2, centerX + 2, centerY - 2, color);
+        context.hLine(centerX - 3, centerX + 3, centerY - 1, color);
+        context.hLine(centerX - 2, centerX + 2, centerY, color);
+        context.hLine(centerX - 1, centerX + 1, centerY + 1, color);
+        context.hLine(centerX, centerX, centerY + 2, color);
     }
 
     public static int mixColor(int color, int target, float ratio) {

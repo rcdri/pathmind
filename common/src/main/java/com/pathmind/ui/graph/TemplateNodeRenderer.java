@@ -32,8 +32,6 @@ final class TemplateNodeRenderer {
         NodeGraphData getPresetPreviewGraphData(Node node);
         void renderStopTargetInputField(GuiGraphics context, Font textRenderer, Node node,
                                         boolean isOverSidebar, int mouseX, int mouseY);
-        void renderRunPresetDropdownList(GuiGraphics context, Font textRenderer, Node node,
-                                         boolean isOverSidebar, int mouseX, int mouseY);
     }
 
     private static final int TEMPLATE_PREVIEW_MARGIN = 6;
@@ -91,7 +89,6 @@ final class TemplateNodeRenderer {
             isOverSidebar ? UITheme.BORDER_SUBTLE : UITheme.BORDER_DEFAULT);
 
         renderTemplatePreviewGraph(context, textRenderer, node, previewLeft, previewTop, previewWidth, previewHeight, isOverSidebar);
-        host.renderRunPresetDropdownList(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
     }
 
     private void renderTemplatePreviewGraph(GuiGraphics context, Font textRenderer, Node node,

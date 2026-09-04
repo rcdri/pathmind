@@ -419,107 +419,26 @@ final class PathmindSettingsPopupController {
 
     private void drawLanguageDropdown(GuiGraphics context, int x, int y, int width, String currentLang, boolean hovered) {
         DropdownLayoutHelper.updateOpenAnimation(languageDropdownAnimation, languageDropdownOpen);
-
-        float hoverProgress = languageDropdownOpen ? 1f : host.hoverProgress("settings-language-dropdown-bg", hovered);
-        UIStyleHelper.FieldPalette fieldPalette = UIStyleHelper.getDropdownFieldPalette(accentColor(), hoverProgress, languageDropdownOpen, false);
-        UIStyleHelper.drawFieldFrame(
-            context,
-            x,
-            y,
-            width,
-            20,
-            new UIStyleHelper.FieldPalette(
-                animation.getAnimatedPopupColor(fieldPalette.backgroundColor()),
-                animation.getAnimatedPopupColor(fieldPalette.borderColor()),
-                animation.getAnimatedPopupColor(fieldPalette.innerBorderColor()),
-                animation.getAnimatedPopupColor(fieldPalette.textColor()),
-                animation.getAnimatedPopupColor(fieldPalette.placeholderColor())
-            )
-        );
-
-        int labelColor = animation.getAnimatedPopupColor(fieldPalette.textColor());
-        context.drawString(host.font(), Component.literal(currentLang), x + 4, y + 6, labelColor);
-
-        int arrowCenterX = x + width - 10;
-        int arrowCenterY = y + 10;
-        UIStyleHelper.drawChevron(context, arrowCenterX, arrowCenterY, languageDropdownOpen, labelColor);
+        int border = animation.getAnimatedPopupColor(languageDropdownOpen || hovered ? accentColor() : UITheme.BORDER_DEFAULT);
+        UIStyleHelper.drawToolbarButtonFrame(context, x, y, width, 20, animation.getAnimatedPopupColor(UITheme.BACKGROUND_SECONDARY), border, animation.getAnimatedPopupColor(UITheme.PANEL_INNER_BORDER));
+        int labelColor = animation.getAnimatedPopupColor(languageDropdownOpen ? accentColor() : UITheme.TEXT_PRIMARY);
+        context.drawString(host.font(), Component.literal(currentLang), x + 8, y + 6, labelColor);
+        PathmindPopupRenderer.drawDropdownChevron(context, x + width - 12, y + 6, animation.getAnimatedPopupColor(languageDropdownOpen ? accentColor() : UITheme.TEXT_SECONDARY), languageDropdownOpen);
     }
 
     private void drawLanguageDropdownOptions(GuiGraphics context, int x, int y, int width, int mouseX, int mouseY) {
-        // Get animation progress
         float animProgress = languageDropdownAnimation.getValue();
-
-        // Don't render options if animation is fully closed
         if (animProgress <= 0.001f) {
             return;
         }
-
-        Object matrices = context.pose();
-        MatrixStackBridge.push(matrices);
-        MatrixStackBridge.translateZ(matrices, 550.0f);
-
-        int dropdownY = y + 22;
-        int fullOptionsHeight = SUPPORTED_LANGUAGES.length * 20;
-        int scissorLeft = Math.max(x, languageDropdownClipX);
-        int scissorTop = Math.max(dropdownY, languageDropdownClipY);
-        int scissorRight = Math.min(x + width, languageDropdownClipX + languageDropdownClipWidth);
-        int scissorBottom = Math.min(
-            DropdownLayoutHelper.getRevealBottom(dropdownY, fullOptionsHeight, animProgress, 1),
-            languageDropdownClipY + languageDropdownClipHeight
-        );
-
-        if (scissorRight <= scissorLeft || scissorBottom <= scissorTop) {
-            MatrixStackBridge.pop(matrices);
-            return;
-        }
-
-        context.enableScissor(scissorLeft, scissorTop, scissorRight, scissorBottom);
-
-        UIStyleHelper.ScrollContainerPalette containerPalette = UIStyleHelper.getScrollContainerPalette(accentColor(), animProgress, languageDropdownOpen, false);
-        UIStyleHelper.drawScrollContainer(
-            context,
-            x,
-            dropdownY,
-            width,
-            fullOptionsHeight,
-            new UIStyleHelper.ScrollContainerPalette(
-                animation.getAnimatedPopupColor(containerPalette.backgroundColor()),
-                animation.getAnimatedPopupColor(containerPalette.borderColor()),
-                animation.getAnimatedPopupColor(containerPalette.innerBorderColor()),
-                animation.getAnimatedPopupColor(containerPalette.trackColor()),
-                animation.getAnimatedPopupColor(containerPalette.thumbColor())
-            )
-        );
-
-        // Draw each language option
-        for (int i = 0; i < SUPPORTED_LANGUAGES.length; i++) {
-            String lang = SUPPORTED_LANGUAGES[i];
-            String langName = getLanguageDisplayName(lang);
-            int optionY = dropdownY + (i * 20);
-
-            boolean optionHovered = animProgress >= 1f && mouseX >= x && mouseX <= x + width && mouseY >= optionY && mouseY <= optionY + 20;
-            String currentLang = host.client().getLanguageManager().getSelected();
-            boolean selected = lang.equals(currentLang);
-            UIStyleHelper.DropdownRowPalette rowPalette = UIStyleHelper.getDropdownRowPalette(accentColor(), optionHovered ? 1f : 0f, selected, false);
-            UIStyleHelper.drawDropdownRow(
-                context,
-                x + 1,
-                optionY + 1,
-                width - 2,
-                19,
-                new UIStyleHelper.DropdownRowPalette(
-                    animation.getAnimatedPopupColor(rowPalette.backgroundColor()),
-                    animation.getAnimatedPopupColor(rowPalette.borderColor()),
-                    animation.getAnimatedPopupColor(rowPalette.textColor())
-                )
-            );
-
-            int textColor = animation.getAnimatedPopupColor(selected ? accentColor() : rowPalette.textColor());
-            context.drawString(host.font(), Component.literal(langName), x + 4, optionY + 6, textColor);
-        }
-
-        context.disableScissor();
-        MatrixStackBridge.pop(matrices);
+        PathmindDropdownRenderer.renderTextList(context, host.font(), PathmindDropdownRenderer.TextListSpec.builder()
+            .bounds(x, y + 22, width).rows(20, SUPPORTED_LANGUAGES.length, SUPPORTED_LANGUAGES.length)
+            .scroll(0, 0, 0).animation(animProgress).hoverPoint(mouseX, mouseY)
+            .colors(accentColor(), UITheme.TEXT_PRIMARY).textLayout(8, 5, false, true)
+            .labels("", index -> getLanguageDisplayName(SUPPORTED_LANGUAGES[index]))
+            .textColors(index -> SUPPORTED_LANGUAGES[index].equals(host.client().getLanguageManager().getSelected()) ? accentColor() : UITheme.TEXT_PRIMARY)
+            .chrome(new UIStyleHelper.ScrollContainerPalette(UITheme.BACKGROUND_SECONDARY, UITheme.BORDER_DEFAULT, UITheme.PANEL_INNER_BORDER, UITheme.BORDER_DEFAULT, UITheme.BORDER_DEFAULT), UITheme.BORDER_DEFAULT, UITheme.BORDER_DEFAULT, UITheme.BORDER_DEFAULT)
+            .build());
     }
 
     private String getLanguageDisplayName(String languageCode) {
@@ -740,38 +659,41 @@ final class PathmindSettingsPopupController {
             SettingsManager.save(settings);
             return true;
         }
-        int blocksWidth = popupWidth - 40;
-        int blocksX = contentX;
-        int blocksY = scaffoldDividerY + 8;
-        if (scaffoldingBlocksField != null && bodyHovered && host.isPointInRect(mouseXi, mouseYi, blocksX, blocksY, blocksWidth, 16)) {
-            scaffoldingBlocksField.setEditable(true);
-            scaffoldingBlocksField.setFocused(true);
-            //? if MC_1_21_8 {
-            /*scaffoldingBlocksField.mouseClicked(mouseX, mouseY, button);*/
-            //?} else {
-            scaffoldingBlocksField.mouseClicked(click, inBounds);
-            //?}
-            return true;
-        }
-        int resultY = blocksY + 20;
-        for (String id : matchingScaffoldingBlockIds()) {
-            if (bodyHovered && host.isPointInRect(mouseXi, mouseYi, blocksX + blocksWidth - 20, resultY + 1, 18, 12)) {
-                addAllowedScaffoldingBlock(id);
+        boolean scaffoldingEnabled = Boolean.TRUE.equals(settings.schematicAllowScaffolding);
+        if (scaffoldingEnabled) {
+            int blocksWidth = popupWidth - 40;
+            int blocksX = contentX;
+            int blocksY = scaffoldDividerY + 8;
+            if (scaffoldingBlocksField != null && bodyHovered && host.isPointInRect(mouseXi, mouseYi, blocksX, blocksY, blocksWidth, 16)) {
+                scaffoldingBlocksField.setEditable(true);
+                scaffoldingBlocksField.setFocused(true);
+                //? if MC_1_21_8 {
+                /*scaffoldingBlocksField.mouseClicked(mouseX, mouseY, button);*/
+                //?} else {
+                scaffoldingBlocksField.mouseClicked(click, inBounds);
+                //?}
                 return true;
             }
-            resultY += 15;
-        }
-        int selectedRowY = blocksY + 82;
-        List<String> allowedScaffolding = allowedScaffoldingBlockIds();
-        for (int index = 0; index < Math.min(3, allowedScaffolding.size()); index++) {
-            String id = allowedScaffolding.get(index);
-            if (bodyHovered && host.isPointInRect(mouseXi, mouseYi, blocksX + blocksWidth - 20, selectedRowY + 1, 18, 12)) {
-                removeAllowedScaffoldingBlock(id);
-                return true;
+            int resultY = blocksY + 20;
+            for (String id : matchingScaffoldingBlockIds()) {
+                if (bodyHovered && host.isPointInRect(mouseXi, mouseYi, blocksX + blocksWidth - 20, resultY + 1, 18, 12)) {
+                    addAllowedScaffoldingBlock(id);
+                    return true;
+                }
+                resultY += 15;
             }
-            selectedRowY += 15;
+            int selectedRowY = blocksY + 82;
+            List<String> allowedScaffolding = allowedScaffoldingBlockIds();
+            for (int index = 0; index < Math.min(3, allowedScaffolding.size()); index++) {
+                String id = allowedScaffolding.get(index);
+                if (bodyHovered && host.isPointInRect(mouseXi, mouseYi, blocksX + blocksWidth - 20, selectedRowY + 1, 18, 12)) {
+                    removeAllowedScaffoldingBlock(id);
+                    return true;
+                }
+                selectedRowY += 15;
+            }
         }
-        int scaffoldingPickerBottomY = scaffoldDividerY + 142;
+        int scaffoldingPickerBottomY = scaffoldDividerY + (scaffoldingEnabled ? 142 : 0);
         int placementSpeedDividerY = scaffoldingPickerBottomY + 22;
         int placementSpeedCenterY = (scaffoldingPickerBottomY + placementSpeedDividerY) / 2;
         int placementSpeedSliderX = popupX + popupWidth - SETTINGS_SLIDER_WIDTH - 20;
@@ -1331,10 +1253,14 @@ final class PathmindSettingsPopupController {
         renderToggleRow(context, mouseX, mouseY, contentX, (pathPlaceDividerY + scaffoldDividerY) / 2,
             "Allow scaffolding while building", Boolean.TRUE.equals(settings.schematicAllowScaffolding), popupX, scaledWidth);
         context.hLine(sectionDividerX, popupX + scaledWidth - 16, scaffoldDividerY, animation.getAnimatedPopupColor(UITheme.BORDER_SUBTLE));
-        int scaffoldFieldCenterY = scaffoldDividerY + 16;
-        renderScaffoldingBlocksRow(context, mouseX, mouseY, contentX, scaffoldFieldCenterY, popupX, scaledWidth);
-        int scaffoldingPickerBottomY = scaffoldDividerY + 142;
-        context.hLine(sectionDividerX, popupX + scaledWidth - 16, scaffoldingPickerBottomY, animation.getAnimatedPopupColor(UITheme.BORDER_SUBTLE));
+        boolean scaffoldingEnabled = Boolean.TRUE.equals(settings.schematicAllowScaffolding);
+        int scaffoldingPickerBottomY = scaffoldDividerY;
+        if (scaffoldingEnabled) {
+            int scaffoldFieldCenterY = scaffoldDividerY + 16;
+            renderScaffoldingBlocksRow(context, mouseX, mouseY, contentX, scaffoldFieldCenterY, popupX, scaledWidth);
+            scaffoldingPickerBottomY += 142;
+            context.hLine(sectionDividerX, popupX + scaledWidth - 16, scaffoldingPickerBottomY, animation.getAnimatedPopupColor(UITheme.BORDER_SUBTLE));
+        }
         int placementSpeedDividerY = scaffoldingPickerBottomY + 22;
         int placementSpeedCenterY = (scaffoldingPickerBottomY + placementSpeedDividerY) / 2;
         renderPlacementSpeedRow(context, mouseX, mouseY, contentX, placementSpeedCenterY,
@@ -2184,11 +2110,13 @@ final class PathmindSettingsPopupController {
     }
 
     int getSettingsNodeSectionLabelY(int popupY) {
-        return PathmindPopupLayout.settingsNodeSectionLabelY(popupY, SETTINGS_OPTION_HEIGHT);
+        return PathmindPopupLayout.settingsNodeSectionLabelY(popupY, SETTINGS_OPTION_HEIGHT,
+            Boolean.TRUE.equals(settings.schematicAllowScaffolding));
     }
 
     int getSettingsNodeSectionBodyY(int popupY) {
-        return PathmindPopupLayout.settingsNodeSectionBodyY(popupY, SETTINGS_OPTION_HEIGHT);
+        return PathmindPopupLayout.settingsNodeSectionBodyY(popupY, SETTINGS_OPTION_HEIGHT,
+            Boolean.TRUE.equals(settings.schematicAllowScaffolding));
     }
 
     int getSettingsNodeTypeSelectorViewportHeight(int contentWidth) {

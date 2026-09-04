@@ -10,10 +10,14 @@ import com.pathmind.data.NodeGraphData;
 import com.pathmind.data.NodeGraphPersistence;
 import com.pathmind.data.PresetManager;
 import com.pathmind.data.SettingsManager.Settings;
+import com.pathmind.ai.AiPresetService;
+import com.pathmind.ai.AiProviderRegistry;
+import com.pathmind.ai.AiProviderType;
 import com.pathmind.execution.ExecutionManager;
 import com.pathmind.nodes.Node;
 import com.pathmind.nodes.NodeCategory;
 import com.pathmind.nodes.NodeParameter;
+import com.pathmind.nodes.NodeMode;
 import com.pathmind.nodes.NodeType;
 import com.pathmind.ui.animation.AnimatedValue;
 import com.pathmind.ui.animation.AnimationHelper;
@@ -38,6 +42,7 @@ import com.pathmind.ui.theme.UIStyleHelper;
 import com.pathmind.ui.theme.UITheme;
 import com.pathmind.util.PathmindI18n;
 import com.pathmind.validation.GraphValidationResult;
+import com.pathmind.validation.GraphValidator;
 import com.pathmind.util.BaritoneDependencyChecker;
 import com.pathmind.util.DrawContextBridge;
 import com.pathmind.util.MatrixStackBridge;
@@ -64,6 +69,7 @@ import net.minecraft.util.Mth;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.IdentityHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -137,6 +143,7 @@ public class PathmindVisualEditorScreen extends Screen {
     private final PopupAnimationHandler missingUiUtilsPopupAnimation = new PopupAnimationHandler();
     private final PathmindSettingsPopupController settingsPopupController =
         new PathmindSettingsPopupController(new SettingsPopupHost());
+    private final PathmindAiPopupController aiPopupController = new PathmindAiPopupController(new AiPopupHost());
     private final PathmindPresetPopupController presetPopupController =
         new PathmindPresetPopupController(new PresetPopupHost());
     private final PathmindModalOverlayController modalOverlayController = new PathmindModalOverlayController(
@@ -231,6 +238,33 @@ public class PathmindVisualEditorScreen extends Screen {
         @Override
         public void reopenForLanguageChange() {
             PathmindVisualEditorScreen.this.reopenForLanguageChange();
+        }
+
+    }
+
+    private final class AiPopupHost implements PathmindAiPopupController.Host {
+        @Override
+        public void requestAiProposal(AiProviderType provider, String prompt, java.util.function.Consumer<AiPresetService.Proposal> success,
+                                      java.util.function.Consumer<String> failure) {
+            String model = AiProviderRegistry.config(provider).model;
+            AiPresetService.request(provider, model, prompt, baritoneAvailable, uiUtilsAvailable)
+                .whenComplete((proposal, throwable) -> {
+                    Runnable update = () -> {
+                        if (throwable != null) failure.accept(throwable.getCause() == null ? throwable.getMessage() : throwable.getCause().getMessage());
+                        else success.accept(proposal);
+                    };
+                    if (minecraft != null) minecraft.execute(update); else update.run();
+                });
+        }
+
+        @Override
+        public String createAndWriteAiPreset(AiPresetService.Proposal proposal) {
+            return PathmindVisualEditorScreen.this.createAndWriteAiPreset(proposal);
+        }
+
+        @Override
+        public void showAiError(String message) {
+            NodeErrorNotificationOverlay.getInstance().show(message, UITheme.STATE_ERROR);
         }
     }
 
@@ -1435,6 +1469,11 @@ public class PathmindVisualEditorScreen extends Screen {
         public void closePresetDropdown() {
             presetDropdownController.close();
         }
+
+        @Override
+        public net.minecraft.resources.Identifier overlayCursorTexture(int mouseX, int mouseY) {
+            return aiPopupController.cursorTexture(mouseX, mouseY);
+        }
     }
 
     private final class WorkspaceDragHost implements PathmindWorkspaceDragController.Host {
@@ -1691,6 +1730,9 @@ public class PathmindVisualEditorScreen extends Screen {
             DrawContextBridge.startNewRootLayer(context);
         }
 
+        // The AI workspace is non-modal: render it before every modal overlay so dialogs always sit above it.
+        aiPopupController.render(context, this.font, mouseX, mouseY, getAccentColor());
+
         //? if MC_1_21_8 {
         /*Object popupMatrices = context.pose();
         boolean popupDepthPushed = isPopupObscuringWorkspace();
@@ -1754,7 +1796,6 @@ public class PathmindVisualEditorScreen extends Screen {
         if (settingsPopupController.animation().isVisible()) {
             settingsPopupController.renderSettingsPopup(context, mouseX, mouseY);
         }
-
         //? if MC_1_21_8 {
         /*// Legacy rendering draws the scrim before popup contents inside the translated pose.*/
         //?} else {
@@ -1997,6 +2038,11 @@ public class PathmindVisualEditorScreen extends Screen {
             return true;
         }
 
+        // Non-modal AI window is below the modal overlays above, but still receives workspace clicks first.
+        if (aiPopupController.isVisible() && aiPopupController.mouseClicked((int) mouseX, (int) mouseY, button)) {
+            return true;
+        }
+
         if (presetContextMenuController.isOpen()) {
             if (button == 0 && presetContextMenuController.handleClick((int) mouseX, (int) mouseY)) {
                 return true;
@@ -2056,6 +2102,10 @@ public class PathmindVisualEditorScreen extends Screen {
             }
             if (isSettingsButtonClicked((int) mouseX, (int) mouseY, button)) {
                 openSettingsPopup();
+                return true;
+            }
+            if (isAiButtonClicked((int) mouseX, (int) mouseY, button)) {
+                aiPopupController.open(this.width, this.height);
                 return true;
             }
             if (isMarketplaceButtonClicked((int) mouseX, (int) mouseY, button)) {
@@ -2223,6 +2273,9 @@ public class PathmindVisualEditorScreen extends Screen {
             settingsPopupController.mouseDragged(mouseX, mouseY);
             return true;
         }
+        if (aiPopupController.mouseDragged((int) mouseX, (int) mouseY, this.width, this.height)) {
+            return true;
+        }
         if (presetPopupController.createVisible()) {
             return true;
         }
@@ -2303,6 +2356,11 @@ public class PathmindVisualEditorScreen extends Screen {
             settingsPopupController.mouseReleased(click);
             //?}
             return true;
+        }
+        if (aiPopupController.isVisible()) {
+            if (aiPopupController.mouseReleased()) {
+                return true;
+            }
         }
         if (infoPopupAnimation.isVisible()) {
             return true;
@@ -2436,6 +2494,9 @@ public class PathmindVisualEditorScreen extends Screen {
             //?} else {
             return settingsPopupController.keyPressed(input);
             //?}
+        }
+        if (aiPopupController.isVisible()) {
+            return aiPopupController.keyPressed(keyCode, modifiers);
         }
         if (infoPopupAnimation.isVisible()) {
             if (keyCode == GLFW.GLFW_KEY_ESCAPE || keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
@@ -2635,6 +2696,9 @@ public class PathmindVisualEditorScreen extends Screen {
             return settingsPopupController.charTyped(input);
             //?}
         }
+        if (aiPopupController.isVisible()) {
+            return aiPopupController.charTyped(chr);
+        }
         if (validationExecutionController.isPanelOpen()) {
             return true;
         }
@@ -2769,6 +2833,10 @@ public class PathmindVisualEditorScreen extends Screen {
 
         if (bookTextEditorOverlay != null && bookTextEditorOverlay.isVisible()) {
             bookTextEditorOverlay.handleMouseScroll(mouseX, mouseY, verticalAmount);
+            return true;
+        }
+
+        if (aiPopupController.mouseScrolled((int) mouseX, (int) mouseY, verticalAmount)) {
             return true;
         }
 
@@ -3387,6 +3455,76 @@ public class PathmindVisualEditorScreen extends Screen {
         presetWorkspaceController.switchPreset(presetName);
     }
 
+    private String createAndWriteAiPreset(AiPresetService.Proposal proposal) {
+        if (proposal == null || proposal.graph() == null) {
+            return "Error: the AI response is empty.";
+        }
+        String requestedName = proposal.title() == null || proposal.title().isBlank() ? "AI Preset" : proposal.title();
+        java.util.Optional<String> created = PresetManager.createPreset(requestedName);
+        int suffix = 2;
+        while (created.isEmpty() && suffix < 100) {
+            created = PresetManager.createPreset(requestedName + " " + suffix++);
+        }
+        if (created.isEmpty()) {
+            return "Error: could not create the generated preset.";
+        }
+        supplyMissingWalkInputs(proposal.graph());
+        // Make the new preset visible first; the generated graph is then written into this open preset.
+        refreshAvailablePresets();
+        switchPreset(created.get());
+        List<Node> nodes = NodeGraphPersistence.convertToNodes(proposal.graph());
+        Map<String, Node> byId = new HashMap<>();
+        for (Node node : nodes) {
+            if (node != null) byId.put(node.getId(), node);
+        }
+        List<com.pathmind.nodes.NodeConnection> connections = NodeGraphPersistence.convertToConnections(proposal.graph(), byId);
+        GraphValidationResult validation = GraphValidator.validate(nodes, connections, proposal.title(), baritoneAvailable, uiUtilsAvailable,
+            proposal.graph().getRoutines() == null ? List.of() : proposal.graph().getRoutines(), "");
+        if (validation.hasErrors()) {
+            return "Error: created " + created.get() + ", but could not write it: " + validation.getIssues().get(0).getMessage();
+        }
+        if (!NodeGraphPersistence.saveNodeGraphDataForPreset(created.get(), proposal.graph())) {
+            return "Error: created " + created.get() + ", but could not write the generated graph.";
+        }
+        // The preset is already active. Switching again would save the still-empty in-memory
+        // workspace over the generated file, so apply the saved graph directly instead.
+        if (!nodeGraph.applyGraphDataSnapshot(proposal.graph(), false)) {
+            return "Error: created " + created.get() + ", but could not open the generated graph.";
+        }
+        resetWorkspaceTabsFromCurrentGraph();
+        return "Created " + created.get() + ".";
+    }
+
+    /** Repairs the two mandatory Walk attachments when an otherwise valid AI graph omits them. */
+    private void supplyMissingWalkInputs(NodeGraphData graph) {
+        if (graph == null || graph.getNodes() == null) return;
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (NodeGraphData.NodeData node : graph.getNodes()) if (node != null && node.getId() != null) ids.add(node.getId());
+        java.util.List<NodeGraphData.NodeData> additions = new java.util.ArrayList<>();
+        for (NodeGraphData.NodeData walk : graph.getNodes()) {
+            if (walk == null || walk.getType() != NodeType.WALK) continue;
+            java.util.List<NodeGraphData.ParameterAttachmentData> attachments = walk.getParameterAttachments();
+            if (attachments == null) { attachments = new java.util.ArrayList<>(); walk.setParameterAttachments(attachments); }
+            if (!hasAttachment(attachments, 0)) {
+                String id = uniqueAiNodeId(ids, walk.getId() + "-direction");
+                additions.add(aiParameterNode(id, NodeType.PARAM_DIRECTION, null, walk.getId(), walk.getX() + 10, walk.getY() + 60,
+                    new String[][]{{"direction_mode", "Mode", "cardinal", "STRING"}, {"direction_cardinal", "Direction", "north", "STRING"}}));
+                attachments.add(new NodeGraphData.ParameterAttachmentData(0, id));
+            }
+            if (!hasAttachment(attachments, 1)) {
+                String id = uniqueAiNodeId(ids, walk.getId() + "-duration");
+                additions.add(aiParameterNode(id, NodeType.PARAM_DURATION, NodeMode.WAIT_SECONDS, walk.getId(), walk.getX() + 10, walk.getY() + 120,
+                    new String[][]{{"duration", "Duration", "1.0", "DOUBLE"}}));
+                attachments.add(new NodeGraphData.ParameterAttachmentData(1, id));
+            }
+        }
+        graph.getNodes().addAll(additions);
+    }
+
+    private static boolean hasAttachment(java.util.List<NodeGraphData.ParameterAttachmentData> attachments, int slot) { return attachments.stream().anyMatch(attachment -> attachment != null && attachment.getSlotIndex() == slot && attachment.getParameterNodeId() != null && !attachment.getParameterNodeId().isBlank()); }
+    private static String uniqueAiNodeId(java.util.Set<String> ids, String base) { String id = base; int suffix = 2; while (!ids.add(id)) id = base + "-" + suffix++; return id; }
+    private static NodeGraphData.NodeData aiParameterNode(String id, NodeType type, NodeMode mode, String parent, int x, int y, String[][] values) { NodeGraphData.NodeData node = new NodeGraphData.NodeData(id, type, mode, x, y, new java.util.ArrayList<>()); node.setParentParameterHostId(parent); for (String[] value : values) { NodeGraphData.ParameterData parameter = new NodeGraphData.ParameterData(value[1], value[2], value[3]); parameter.setId(value[0]); parameter.setUserEdited(true); node.getParameters().add(parameter); } return node; }
+
     private void renderWorkspaceButtons(GuiGraphics context, int mouseX, int mouseY) {
         if (isPopupObscuringWorkspace()) {
             mouseX = Integer.MIN_VALUE;
@@ -3414,6 +3552,7 @@ public class PathmindVisualEditorScreen extends Screen {
         boolean importHovered = renderImportExportButton(context, mouseX, mouseY, buttonY);
         boolean clearHovered = renderClearButton(context, mouseX, mouseY, buttonY);
         boolean homeHovered = renderHomeButton(context, mouseX, mouseY, buttonY);
+        boolean aiHovered = renderAiButton(context, mouseX, mouseY, false);
 
         if (settingsPopupController.showWorkspaceTooltips() && !isPopupObscuringWorkspace()) {
             if (homeHovered) {
@@ -3422,6 +3561,8 @@ public class PathmindVisualEditorScreen extends Screen {
                 TooltipRenderer.render(context, this.font, Component.translatable("pathmind.tooltip.clearWorkspace").getString(), mouseX, mouseY, this.width, this.height);
             } else if (importHovered) {
                 TooltipRenderer.render(context, this.font, Component.translatable("pathmind.popup.importExport.title").getString(), mouseX, mouseY, this.width, this.height);
+            } else if (aiHovered) {
+                TooltipRenderer.render(context, this.font, "Create preset with AI", mouseX, mouseY, this.width, this.height);
             }
         }
     }
@@ -3499,6 +3640,11 @@ public class PathmindVisualEditorScreen extends Screen {
         }
     }
 
+    private boolean renderAiButton(GuiGraphics context, int mouseX, int mouseY, boolean disabled) {
+        return renderWorkspaceIconButton(context, getAiButtonX(), getSettingsButtonY(), mouseX, mouseY,
+            aiPopupController.isVisible(), disabled, "ai-preset-button", PathmindWorkspaceChrome::drawSparkleIcon);
+    }
+
     private boolean renderWorkspaceIconButton(GuiGraphics context, int buttonX, int buttonY, int mouseX, int mouseY,
                                               boolean active, boolean disabled, Object hoverKey,
                                               PathmindWorkspaceChrome.IconPainter iconPainter) {
@@ -3521,6 +3667,10 @@ public class PathmindVisualEditorScreen extends Screen {
 
     private int getWorkspaceButtonY() {
         return PathmindWorkspaceChrome.topButtonY(TITLE_BAR_HEIGHT, BOTTOM_BUTTON_MARGIN);
+    }
+
+    private int getAiButtonX() {
+        return getHomeButtonX() + BOTTOM_BUTTON_SIZE + BOTTOM_BUTTON_SPACING;
     }
 
     private int getSidebarVisibleWidth() {
@@ -3589,6 +3739,11 @@ public class PathmindVisualEditorScreen extends Screen {
         int buttonX = getSettingsButtonX();
         int buttonY = getSettingsButtonY();
         return PathmindWorkspaceChrome.contains(mouseX, mouseY, buttonX, buttonY, BOTTOM_BUTTON_SIZE, BOTTOM_BUTTON_SIZE);
+    }
+
+    private boolean isAiButtonClicked(int mouseX, int mouseY, int button) {
+        return button == 0
+            && PathmindWorkspaceChrome.contains(mouseX, mouseY, getAiButtonX(), getSettingsButtonY(), BOTTOM_BUTTON_SIZE, BOTTOM_BUTTON_SIZE);
     }
 
     int screenWidth() {

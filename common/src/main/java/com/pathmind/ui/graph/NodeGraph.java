@@ -1028,17 +1028,6 @@ public class NodeGraph {
                                                   boolean isOverSidebar, int mouseX, int mouseY) {
             nodeControls.renderBookTextInput(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
         }
-        @Override public void renderSchematicDropdownList(GuiGraphics context, Font textRenderer, Node node,
-                                                          boolean isOverSidebar, int mouseX, int mouseY) {
-            NodeGraph.this.renderSchematicDropdownList(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
-        }
-        @Override public boolean isPresetSelectorNode(Node node) {
-            return NodeGraph.this.isPresetSelectorNode(node);
-        }
-        @Override public void renderRunPresetDropdownList(GuiGraphics context, Font textRenderer, Node node,
-                                                          boolean isOverSidebar, int mouseX, int mouseY) {
-            NodeGraph.this.renderRunPresetDropdownList(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
-        }
         @Override public void renderBooleanToggleButton(GuiGraphics context, Font textRenderer, Node node,
                                                         boolean isOverSidebar, int mouseX, int mouseY) {
             nodeControls.renderBooleanToggleButton(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
@@ -1093,10 +1082,6 @@ public class NodeGraph {
         @Override public void renderStopTargetInputField(GuiGraphics context, Font textRenderer, Node node,
                                                          boolean isOverSidebar, int mouseX, int mouseY) {
             NodeGraph.this.renderStopTargetInputField(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
-        }
-        @Override public void renderRunPresetDropdownList(GuiGraphics context, Font textRenderer, Node node,
-                                                          boolean isOverSidebar, int mouseX, int mouseY) {
-            NodeGraph.this.renderRunPresetDropdownList(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
         }
     });
     private final ParameterTextEditorController parameterEditor = new ParameterTextEditorController(
@@ -2379,6 +2364,7 @@ public class NodeGraph {
 
         long dropdownStartNanos = !onlyDragged ? System.nanoTime() : 0L;
         if (!onlyDragged) {
+            renderSpecializedDropdownLists(context, textRenderer, mouseX, mouseY);
             renderParameterDropdownList(context, textRenderer, mouseX, mouseY);
             renderRandomRoundingDropdownList(context, textRenderer, mouseX, mouseY);
             renderModeDropdownList(context, textRenderer, mouseX, mouseY);
@@ -3098,14 +3084,26 @@ public class NodeGraph {
             context, textRenderer, node, isOverSidebar, mouseX, mouseY);
     }
 
-    private void renderSchematicDropdownList(GuiGraphics context, Font textRenderer, Node node, boolean isOverSidebar, int mouseX, int mouseY) {
-        specializedSelectors.renderSchematicDropdown(
-            context, textRenderer, node, isOverSidebar, mouseX, mouseY);
-    }
+    /**
+     * Dropdowns must render after every node in the hierarchy: attached nodes can otherwise
+     * overpaint a list opened by their parent node.
+     */
+    private void renderSpecializedDropdownLists(GuiGraphics context, Font textRenderer, int mouseX, int mouseY) {
+        Node schematicNode = specializedSelectors.getSchematicNode();
+        if (schematicNode != null) {
+            int screenX = schematicNode.getX() - viewport.getCameraX();
+            specializedSelectors.renderSchematicDropdown(
+                context, textRenderer, schematicNode,
+                isNodeOverSidebarForRender(schematicNode, screenX, schematicNode.getWidth()), mouseX, mouseY);
+        }
 
-    private void renderRunPresetDropdownList(GuiGraphics context, Font textRenderer, Node node, boolean isOverSidebar, int mouseX, int mouseY) {
-        specializedSelectors.renderRunPresetDropdown(
-            context, textRenderer, node, isOverSidebar, mouseX, mouseY);
+        Node runPresetNode = specializedSelectors.getRunPresetNode();
+        if (runPresetNode != null) {
+            int screenX = runPresetNode.getX() - viewport.getCameraX();
+            specializedSelectors.renderRunPresetDropdown(
+                context, textRenderer, runPresetNode,
+                isNodeOverSidebarForRender(runPresetNode, screenX, runPresetNode.getWidth()), mouseX, mouseY);
+        }
     }
 
     public boolean isEditingCoordinateField() {

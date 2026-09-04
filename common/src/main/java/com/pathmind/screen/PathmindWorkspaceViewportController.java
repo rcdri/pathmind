@@ -48,6 +48,7 @@ final class PathmindWorkspaceViewportController {
         Node draggingSidebarNode();
         boolean isNodeDragBlocked(NodeType nodeType);
         void closePresetDropdown();
+        Identifier overlayCursorTexture(int mouseX, int mouseY);
     }
 
     private final Host host;
@@ -76,6 +77,11 @@ final class PathmindWorkspaceViewportController {
     }
 
     void renderCursor(GuiGraphics context, int mouseX, int mouseY) {
+        Identifier overlayCursor = host.overlayCursorTexture(mouseX, mouseY);
+        if (overlayCursor != null) {
+            PathmindCursor.render(context, overlayCursor, mouseX, mouseY);
+            return;
+        }
         StickyNoteResizeCorner resizeCorner = hoveredStickyNoteResizeCorner(mouseX, mouseY);
         PathmindCursor.render(context, resolveCursorTexture(mouseX, mouseY, resizeCorner), mouseX, mouseY);
     }

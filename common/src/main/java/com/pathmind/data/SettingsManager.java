@@ -68,6 +68,19 @@ public final class SettingsManager {
         public Map<String, String> presetGroupColors = new LinkedHashMap<>();
         public Map<String, Boolean> presetGroupsExpanded = new LinkedHashMap<>();
         public java.util.List<String> presetGroupOrder = new java.util.ArrayList<>();
+        /** Non-secret provider preferences. API keys live encrypted in aiProviderSecrets. */
+        public Map<String, AiProviderSettings> aiProviders = new LinkedHashMap<>();
+        /** AES-GCM ciphertexts keyed by provider id; never send this map to a provider. */
+        public Map<String, String> aiProviderSecrets = new LinkedHashMap<>();
+
+        public static class AiProviderSettings {
+            public Boolean enabled = false;
+            public String model = "";
+            public String endpoint = "";
+
+            public AiProviderSettings() {
+            }
+        }
 
         public Settings() {
         }
@@ -312,6 +325,18 @@ public final class SettingsManager {
         if (settings.presetGroupOrder == null) {
             settings.presetGroupOrder = new java.util.ArrayList<>();
         }
+        if (settings.aiProviders == null) {
+            settings.aiProviders = new LinkedHashMap<>();
+        }
+        if (settings.aiProviderSecrets == null) {
+            settings.aiProviderSecrets = new LinkedHashMap<>();
+        }
+        settings.aiProviders.values().removeIf(java.util.Objects::isNull);
+        settings.aiProviders.values().forEach(provider -> {
+            if (provider.enabled == null) provider.enabled = false;
+            if (provider.model == null) provider.model = "";
+            if (provider.endpoint == null) provider.endpoint = "";
+        });
         return settings;
     }
 }

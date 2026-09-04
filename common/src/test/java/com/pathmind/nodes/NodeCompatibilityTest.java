@@ -80,6 +80,17 @@ class NodeCompatibilityTest {
     }
 
     @Test
+    void walkOnlyAcceptsDurationInItsDurationDistanceSlot() {
+        Node walk = new Node(NodeType.WALK, 0, 0);
+        Node duration = new Node(NodeType.PARAM_DURATION, 0, 0);
+        Node direction = new Node(NodeType.PARAM_DIRECTION, 0, 0);
+
+        assertFalse(walk.canAcceptParameterNode(duration, 0));
+        assertTrue(walk.canAcceptParameterNode(duration, 1));
+        assertTrue(walk.canAcceptParameterNode(direction, 0));
+    }
+
+    @Test
     void comparisonEvaluationDistinguishesInvalidTypesFromFalse() {
         Node equals = new Node(NodeType.OPERATOR_EQUALS, 0, 0);
         Node distance = new Node(NodeType.SENSOR_DISTANCE_BETWEEN, 0, 0);

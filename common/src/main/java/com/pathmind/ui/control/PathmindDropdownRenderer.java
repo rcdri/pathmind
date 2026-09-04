@@ -1,6 +1,7 @@
 package com.pathmind.ui.control;
 
 import com.pathmind.ui.theme.UIStyleHelper;
+import com.pathmind.util.DrawContextBridge;
 import com.pathmind.util.DropdownLayoutHelper;
 import com.pathmind.util.MatrixStackBridge;
 import com.pathmind.util.TextRenderUtil;
@@ -42,6 +43,9 @@ public final class PathmindDropdownRenderer {
 
         Object matrices = context.pose();
         MatrixStackBridge.push(matrices);
+        // Node controls may have started newer GUI root layers. Start one for the popup so
+        // its batched geometry remains above every node, including attached parameters.
+        DrawContextBridge.startNewRootLayer(context);
         MatrixStackBridge.translateZ(matrices, 400.0f);
         context.enableScissor(spec.x, spec.y, spec.x + Math.max(1, spec.width), spec.y + animatedHeight);
         UIStyleHelper.drawScrollContainer(context, spec.x, spec.y, spec.width, listHeight, spec.containerPalette);

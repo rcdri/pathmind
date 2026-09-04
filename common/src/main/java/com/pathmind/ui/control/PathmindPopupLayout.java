@@ -138,6 +138,10 @@ public final class PathmindPopupLayout {
     }
 
     public static int settingsNodeSectionLabelY(int contentPopupY, int optionHeight) {
+        return settingsNodeSectionLabelY(contentPopupY, optionHeight, true);
+    }
+
+    public static int settingsNodeSectionLabelY(int contentPopupY, int optionHeight, boolean scaffoldingEnabled) {
         int languageLabelY = contentPopupY + 44;
         int languageButtonY = languageLabelY + 12;
         int accentLabelY = languageButtonY + 50;
@@ -151,14 +155,17 @@ public final class PathmindPopupLayout {
         int hudDividerY = overlayDividerY + 22;
         int profilerDividerY = hudDividerY + 22;
         int delayDividerY = profilerDividerY + 26;
-        // Keep this in lockstep with the Pathfinding section. It contains the
-        // scaffolding block picker (search, results, and selected list) in
-        // addition to the original toggles and sliders.
-        return delayDividerY + 320;
+        // Keep this in lockstep with the Pathfinding section. The picker is
+        // only present when scaffolding while building is enabled.
+        return delayDividerY + (scaffoldingEnabled ? 320 : 178);
     }
 
     public static int settingsNodeSectionBodyY(int contentPopupY, int optionHeight) {
-        return settingsNodeSectionLabelY(contentPopupY, optionHeight) + 14;
+        return settingsNodeSectionBodyY(contentPopupY, optionHeight, true);
+    }
+
+    public static int settingsNodeSectionBodyY(int contentPopupY, int optionHeight, boolean scaffoldingEnabled) {
+        return settingsNodeSectionLabelY(contentPopupY, optionHeight, scaffoldingEnabled) + 14;
     }
 
     public static Rect settingsCloseButton(int popupX, int popupY, int popupWidth, int popupHeight,

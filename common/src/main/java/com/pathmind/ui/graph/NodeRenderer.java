@@ -157,11 +157,6 @@ final class NodeRenderer {
                                           boolean isOverSidebar, int mouseX, int mouseY);
         void renderBookTextInput(GuiGraphics context, Font textRenderer, Node node,
                                  boolean isOverSidebar, int mouseX, int mouseY);
-        void renderSchematicDropdownList(GuiGraphics context, Font textRenderer, Node node,
-                                         boolean isOverSidebar, int mouseX, int mouseY);
-        boolean isPresetSelectorNode(Node node);
-        void renderRunPresetDropdownList(GuiGraphics context, Font textRenderer, Node node,
-                                         boolean isOverSidebar, int mouseX, int mouseY);
         void renderBooleanToggleButton(GuiGraphics context, Font textRenderer, Node node,
                                        boolean isOverSidebar, int mouseX, int mouseY);
         void renderSensorSlot(GuiGraphics context, Font textRenderer, Node node, boolean isOverSidebar);
@@ -489,12 +484,6 @@ final class NodeRenderer {
                 }
                 if (node.hasBookTextInput()) {
                     host.renderBookTextInput(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
-                }
-                if (node.hasSchematicDropdownField()) {
-                    host.renderSchematicDropdownList(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
-                }
-                if (host.isPresetSelectorNode(node)) {
-                    host.renderRunPresetDropdownList(context, textRenderer, node, isOverSidebar, mouseX, mouseY);
                 }
             }
 

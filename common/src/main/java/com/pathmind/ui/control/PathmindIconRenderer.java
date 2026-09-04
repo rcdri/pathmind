@@ -56,14 +56,18 @@ public final class PathmindIconRenderer {
                                     int color, int centerCutoutColor) {
         int centerX = buttonX + buttonSize / 2;
         int centerY = buttonY + buttonSize / 2;
-        context.fill(centerX - 1, centerY - 6, centerX + 1, centerY - 4, color);
-        context.fill(centerX - 1, centerY + 4, centerX + 1, centerY + 6, color);
-        context.fill(centerX - 6, centerY - 1, centerX - 4, centerY + 1, color);
-        context.fill(centerX + 4, centerY - 1, centerX + 6, centerY + 1, color);
-
-        context.fill(centerX - 4, centerY - 4, centerX + 4, centerY + 4, color);
-        context.fill(centerX - 3, centerY - 3, centerX + 3, centerY + 3, centerCutoutColor);
-        context.fill(centerX - 1, centerY - 1, centerX + 1, centerY + 1, color);
+        // Eight clear teeth make this read as a cog rather than a sparkle at pixel scale.
+        context.fill(centerX - 1, centerY - 6, centerX + 2, centerY - 3, color);
+        context.fill(centerX - 1, centerY + 4, centerX + 2, centerY + 7, color);
+        context.fill(centerX - 6, centerY - 1, centerX - 3, centerY + 2, color);
+        context.fill(centerX + 4, centerY - 1, centerX + 7, centerY + 2, color);
+        context.fill(centerX - 5, centerY - 5, centerX - 3, centerY - 3, color);
+        context.fill(centerX + 3, centerY - 5, centerX + 5, centerY - 3, color);
+        context.fill(centerX - 5, centerY + 3, centerX - 3, centerY + 5, color);
+        context.fill(centerX + 3, centerY + 3, centerX + 5, centerY + 5, color);
+        context.fill(centerX - 3, centerY - 3, centerX + 4, centerY + 4, color);
+        context.fill(centerX - 1, centerY - 1, centerX + 2, centerY + 2, centerCutoutColor);
+        context.fill(centerX - 1, centerY - 1, centerX + 2, centerY + 2, centerCutoutColor);
     }
 
     public static void drawPencil(GuiGraphics context, int x, int y, int size, int color) {

@@ -351,6 +351,7 @@ final class SpecializedSelectorController {
     }
 
     boolean isSchematicOpenFor(Node node) { return schematicOpen && schematicNode == node; }
+    Node getSchematicNode() { return schematicNode; }
 
     boolean isRunPresetOpen() { return runPresetOpen; }
     boolean isRunPresetOpenFor(Node node) { return runPresetOpen && runPresetNode == node; }
