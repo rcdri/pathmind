@@ -15,7 +15,8 @@ import java.util.concurrent.CompletableFuture;
 
 /** Runs model-selected tools against an isolated graph draft, never the live editor graph. */
 public final class AiPresetAgent {
-    static final int MAX_TURNS = 14;
+    static final int MAX_TURNS = 16;
+    private static final int MAX_CONSECUTIVE_FAILURES = 3;
     private static final int MAX_TRANSCRIPT_CHARS = 140_000;
     private static final Gson GSON = new Gson();
 
@@ -41,16 +42,57 @@ public final class AiPresetAgent {
         return state.provider.generate(request).thenCompose(content -> {
             try {
                 JsonObject action = parseObject(content);
+                String actionKey = actionKey(action, state.draftRevision);
+                if (actionKey.equals(state.lastActionKey)) state.repeatedActionCount++;
+                else {
+                    state.lastActionKey = actionKey;
+                    state.repeatedActionCount = 1;
+                }
+                if (state.repeatedActionCount >= 3) {
+                    return CompletableFuture.failedFuture(new IllegalStateException(
+                        "AI repeated the same tool action without making progress."));
+                }
+                if (state.target == null && !"select_target".equals(string(action, "tool", ""))) {
+                    String targetError = initializeTarget(state, nullableString(action, "target"));
+                    if (targetError != null) {
+                        state.record("TOOL_ERROR", error(targetError));
+                        return continueOrFail(state, targetError);
+                    }
+                }
                 state.record("ASSISTANT_ACTION", action);
                 ToolResult result = execute(state, action);
                 if (result.proposal != null) return CompletableFuture.completedFuture(result.proposal);
+                if (result.payload != null && state.target != null) {
+                    result.payload.addProperty("target", state.target);
+                    result.payload.addProperty("draftRevision", state.draftRevision);
+                }
                 state.record("TOOL_RESULT", result.payload);
+                if (result.payload != null && result.payload.has("ok") && !result.payload.get("ok").getAsBoolean()) {
+                    return continueOrFail(state, string(result.payload, "message", "Tool call failed."));
+                }
+                state.clearFailureStreak();
                 return next(state);
             } catch (RuntimeException exception) {
                 state.record("TOOL_ERROR", error(exception.getMessage()));
-                return next(state);
+                return continueOrFail(state, exception.getMessage());
             }
         });
+    }
+
+    private static CompletableFuture<AiPresetService.Proposal> continueOrFail(State state, String message) {
+        String normalizedMessage = message == null || message.isBlank() ? "unknown tool error" : message;
+        String failureKey = state.draftRevision + "|" + state.target + "|" + normalizedMessage;
+        if (failureKey.equals(state.lastFailureKey)) state.consecutiveFailures++;
+        else {
+            state.lastFailureKey = failureKey;
+            state.consecutiveFailures = 1;
+        }
+        if (state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                "AI repeated the same unsuccessful action " + MAX_CONSECUTIVE_FAILURES + " times: "
+                    + normalizedMessage));
+        }
+        return next(state);
     }
 
     private static ToolResult execute(State state, JsonObject action) {
@@ -73,19 +115,23 @@ public final class AiPresetAgent {
     private static ToolResult selectTarget(State state, JsonObject action) {
         if (state.target != null) return ToolResult.more(error("The target is already selected as '" + state.target + "'."));
         String target = nullableString(action, "target");
-        if (!"new".equals(target) && !"current".equals(target) && !"inspect".equals(target)) {
-            return ToolResult.more(error("Select target new, current, or inspect."));
-        }
-        if ("current".equals(target) && state.activeGraph == null) {
-            return ToolResult.more(error("There is no open graph to edit."));
-        }
-        state.target = target;
-        if ("current".equals(target)) state.workingGraph = graphJson(state.activeGraph);
-        else if ("new".equals(target)) state.workingGraph = emptyGraph();
+        String targetError = initializeTarget(state, target);
+        if (targetError != null) return ToolResult.more(error(targetError));
         JsonObject result = ok("Target selected: " + target + ".");
         result.addProperty("draftRevision", state.draftRevision);
         result.addProperty("next", "Inspect the preset or node contracts, then patch and validate. Inspection targets may inspect and finish.");
         return ToolResult.more(result);
+    }
+
+    private static String initializeTarget(State state, String target) {
+        if (!"new".equals(target) && !"current".equals(target) && !"inspect".equals(target)) {
+            return "Choose target new, current, or inspect on the first action.";
+        }
+        if ("current".equals(target) && state.activeGraph == null) return "There is no open graph to edit.";
+        state.target = target;
+        if ("current".equals(target)) state.workingGraph = graphJson(state.activeGraph);
+        else if ("new".equals(target)) state.workingGraph = emptyGraph();
+        return null;
     }
 
     private static ToolResult inspectPreset(State state) {
@@ -137,7 +183,7 @@ public final class AiPresetAgent {
         }
         JsonObject result = ok("Returned " + contracts.size() + " exact node contract(s).");
         result.add("contracts", contracts);
-        result.add("relevantExamples", AiGoldenGraphLibrary.listMatching(requested));
+        result.add("relevantExamples", AiGoldenGraphLibrary.detailsMatching(requested, 2));
         return ToolResult.more(result);
     }
 
@@ -194,6 +240,7 @@ public final class AiPresetAgent {
         AiPresetService.Validation validation = AiPresetService.validateProposal(temporary, state.activePresetName,
             state.baritoneAvailable, state.uiUtilsAvailable);
         state.validated = validation.valid();
+        state.previewed = validation.valid();
         JsonObject result = new JsonObject();
         result.addProperty("ok", validation.valid());
         result.addProperty("message", validation.valid() ? "The draft passes serialized and runtime validation." : "Repair the listed issues, then validate again.");
@@ -201,6 +248,7 @@ public final class AiPresetAgent {
         validation.issues().forEach(issue -> issues.add(GSON.toJsonTree(issue)));
         result.add("issues", issues);
         result.addProperty("draftRevision", state.draftRevision);
+        if (validation.valid()) result.add("preview", AiExecutionPreview.preview(graph));
         return ToolResult.more(result);
     }
 
@@ -250,6 +298,20 @@ public final class AiPresetAgent {
         return false;
     }
 
+    private static JsonArray compactNodeIndex(boolean baritoneAvailable, boolean uiUtilsAvailable) {
+        JsonArray index = new JsonArray();
+        for (JsonElement element : AiPresetContextBuilder.availableNodeContracts(baritoneAvailable, uiUtilsAvailable)) {
+            JsonObject contract = element.getAsJsonObject();
+            JsonObject summary = new JsonObject();
+            summary.add("type", contract.get("type"));
+            summary.add("name", contract.get("name"));
+            summary.add("description", contract.get("description"));
+            summary.add("category", contract.get("category"));
+            index.add(summary);
+        }
+        return index;
+    }
+
     private static NodeGraphData parseGraph(JsonObject json) {
         NodeGraphData graph = NodeGraphPersistence.parseNodeGraphData(json.toString());
         if (graph == null) throw new IllegalArgumentException("Graph JSON could not be parsed.");
@@ -283,14 +345,14 @@ public final class AiPresetAgent {
 
     private static String systemPrompt(AiProviderCapabilities capabilities) {
         String prompt = "You are Pathmind's graph agent. Work through one tool action per response. Never emit a complete graph directly. "
-            + "First call select_target. Use inspect for questions/diagnosis, current only for an explicit change to the open preset, and new for a standalone preset. "
+            + "Every response must set target to new, current, or inspect. On the first response choose it while calling the first useful tool; select_target is optional. Keep the same target on later responses. Use inspect for questions/diagnosis, current only for an explicit change to the open preset, and new for a standalone preset. "
             + "Available tools: inspect_preset returns the exact open graph and draft; list_node_types lists creatable types; describe_node_types accepts nodeTypes and returns exact sockets, modes, parameters, attachment contracts, and relevant examples; "
             + "list_examples summarizes curated working graphs and inspect_example returns one exact serialized example; "
             + "apply_graph_patch applies small RFC-6902-style add/remove/replace operations to the isolated draft; validate_graph runs Pathmind's real validators; preview_execution returns bounded structural paths; finish returns the reviewed result. "
             + "Patch paths are JSON Pointers rooted at /nodes, /connections, /routines, or /customNodeDefinition. Append array items with /-. valueJson is a JSON-encoded string and is null only for remove. Every patch must include the latest draftRevision from a tool result. "
-            + "Inspect contracts before using unfamiliar nodes. Prefer several small patches. After any patch, validate and repair every issue. After validation succeeds, preview, then finish. "
+            + "Use the supplied node index instead of calling list_node_types unless the index is insufficient. Inspect all relevant contracts in one batched call. Prefer one coherent patch when possible. After a patch, validate and repair every error. Successful validation includes preview_execution output, so finish immediately unless repair is needed. "
             + "Never claim a tool succeeded until its result says ok. Do not reveal hidden reasoning; workLog contains only concise user-visible actions. "
-            + "Every response must match the action schema; set unused nullable fields to null and unused arrays to [].";
+            + "Every response must match the action schema; target is never null, unused nullable fields are null, and unused arrays are [].";
         if (capabilities == null || !capabilities.structuredOutput()) {
             prompt += " This transport cannot enforce the schema, so follow this exact schema:\n" + AiAgentTurnSchema.create();
         }
@@ -323,6 +385,14 @@ public final class AiPresetAgent {
         return object.has(key) && !object.get(key).isJsonNull() ? object.get(key).getAsInt() : null;
     }
 
+    private static String actionKey(JsonObject action, int revision) {
+        return string(action, "tool", "") + "@" + revision + ":"
+            + nullableString(action, "target") + ":"
+            + (action.has("nodeTypes") ? action.get("nodeTypes") : "") + ":"
+            + nullableString(action, "exampleId") + ":"
+            + (action.has("operations") ? action.get("operations") : "");
+    }
+
     private static String shortText(String value, int limit) {
         String normalized = value == null ? "" : value.trim().replaceAll("\\s+", " ");
         return normalized.length() <= limit ? normalized : normalized.substring(0, Math.max(1, limit - 1)) + "…";
@@ -345,6 +415,10 @@ public final class AiPresetAgent {
         private boolean previewed;
         private int draftRevision;
         private int turn;
+        private int consecutiveFailures;
+        private int repeatedActionCount;
+        private String lastActionKey = "";
+        private String lastFailureKey = "";
 
         private State(AiProvider provider, String model, String userPrompt, String conversation,
                       NodeGraphData activeGraph, String activePresetName,
@@ -361,10 +435,17 @@ public final class AiPresetAgent {
 
         private boolean changesGraph() { return "new".equals(target) || "current".equals(target); }
 
+        private void clearFailureStreak() {
+            consecutiveFailures = 0;
+            lastFailureKey = "";
+        }
+
         private String prompt() {
             StringBuilder prompt = new StringBuilder();
             prompt.append("USER_REQUEST:\n").append(userPrompt).append('\n');
             if (!conversation.isBlank()) prompt.append("CONVERSATION_CONTEXT:\n").append(conversation).append('\n');
+            prompt.append("AVAILABLE_NODE_INDEX:\n")
+                .append(compactNodeIndex(baritoneAvailable, uiUtilsAvailable)).append('\n');
             prompt.append("TOOL_TRANSCRIPT:\n").append(transcript);
             return prompt.toString();
         }

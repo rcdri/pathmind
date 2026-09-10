@@ -52,6 +52,33 @@ public final class PathmindIconRenderer {
         context.hLine(centerX - 1, centerX + 1, top, color);
     }
 
+    /** Draws the compact upward arrow used to submit text from a composer. */
+    public static void drawSendArrow(GuiGraphics context, int buttonX, int buttonY, int buttonSize, int color) {
+        int centerX = buttonX + buttonSize / 2;
+        int top = buttonY + Math.max(3, buttonSize / 4);
+        int bottom = buttonY + buttonSize - Math.max(3, buttonSize / 4);
+        context.vLine(centerX, top, bottom, color);
+        context.hLine(centerX - 3, centerX + 3, top + 3, color);
+        context.hLine(centerX - 2, centerX + 2, top + 2, color);
+        context.hLine(centerX - 1, centerX + 1, top + 1, color);
+        context.fill(centerX, top, centerX + 1, top + 1, color);
+    }
+
+    /** Draws three dots with staggered brightness and lift for an indeterminate loading state. */
+    public static void drawLoadingDots(GuiGraphics context, int buttonX, int buttonY, int buttonSize,
+                                       int color, long timeMillis) {
+        int centerX = buttonX + buttonSize / 2;
+        int centerY = buttonY + buttonSize / 2;
+        for (int index = 0; index < 3; index++) {
+            double wave = (Math.sin(timeMillis / 145.0D - index * 1.75D) + 1.0D) * 0.5D;
+            int alpha = 0x55 + (int) Math.round(wave * 0xAA);
+            int dotColor = (color & 0x00FFFFFF) | (alpha << 24);
+            int dotX = centerX - 5 + index * 4;
+            int dotY = centerY - (wave > 0.62D ? 2 : 1);
+            context.fill(dotX, dotY, dotX + 2, dotY + 2, dotColor);
+        }
+    }
+
     public static void drawSettings(GuiGraphics context, int buttonX, int buttonY, int buttonSize,
                                     int color, int centerCutoutColor) {
         int centerX = buttonX + buttonSize / 2;

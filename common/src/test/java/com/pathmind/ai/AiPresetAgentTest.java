@@ -14,9 +14,19 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AiPresetAgentTest {
+    @Test
+    void actionSchemaRequiresANonNullTarget() {
+        JsonObject target = AiAgentTurnSchema.create()
+            .getAsJsonObject("properties").getAsJsonObject("target");
+
+        assertEquals("string", target.get("type").getAsString());
+        assertNotNull(target.getAsJsonArray("enum"));
+    }
+
     @Test
     void inspectionUsesToolsAndReturnsNoGraph() {
         FakeProvider provider = new FakeProvider(
@@ -131,6 +141,49 @@ class AiPresetAgentTest {
         assertTrue(transcript.contains("onboarding-3"));
     }
 
+    @Test
+    void simpleCreationCanCompleteInFourProviderCalls() {
+        NodeGraphData graph = simpleGraph();
+        JsonArray operations = new JsonArray();
+        graph.getNodes().forEach(node -> operations.add(operation("add", "/nodes/-", new Gson().toJson(node))));
+        operations.add(operation("add", "/connections/-", new Gson().toJson(graph.getConnections().get(0))));
+        FakeProvider provider = new FakeProvider(
+            describeActionForTarget("new", "START", "JUMP"),
+            action("apply_graph_patch", "new", operations, List.of(), 0),
+            action("validate_graph", "new", null, List.of(), 1),
+            action("finish", "new", null, List.of("Validated and previewed."), 1)
+        );
+
+        AiPresetService.Proposal proposal = AiPresetAgent.run(provider, "model", "Make a jump preset", "",
+            simpleGraph(), "Open", true, true).join();
+
+        assertEquals(4, provider.requests.size());
+        assertTrue(proposal.review() != null && !proposal.review().executionPaths().isEmpty());
+    }
+
+    @Test
+    void distinctRecoverableErrorsDoNotExhaustTheStagnationGuard() {
+        NodeGraphData graph = simpleGraph();
+        JsonArray operations = new JsonArray();
+        graph.getNodes().forEach(node -> operations.add(operation("add", "/nodes/-", new Gson().toJson(node))));
+        operations.add(operation("add", "/connections/-", new Gson().toJson(graph.getConnections().get(0))));
+        FakeProvider provider = new FakeProvider(
+            action("select_target", "new", null, List.of(), 0),
+            action("not_a_tool", "new", null, List.of(), 0),
+            action("apply_graph_patch", "new", operations, List.of(), 1),
+            action("validate_graph", "new", null, List.of(), 0),
+            action("apply_graph_patch", "new", operations, List.of(), 0),
+            action("validate_graph", "new", null, List.of(), 1),
+            action("finish", "new", null, List.of(), 1)
+        );
+
+        AiPresetService.Proposal proposal = AiPresetAgent.run(provider, "model", "Make a complex preset", "",
+            simpleGraph(), "Open", true, true).join();
+
+        assertEquals(7, provider.requests.size());
+        assertEquals(2, proposal.graph().getNodes().size());
+    }
+
     private static String action(String tool, String target, JsonArray operations, List<String> workLog) {
         return action(tool, target, operations, workLog, 0);
     }
@@ -160,9 +213,13 @@ class AiPresetAgentTest {
     }
 
     private static String describeAction(String... types) {
+        return describeActionForTarget(null, types);
+    }
+
+    private static String describeActionForTarget(String target, String... types) {
         JsonObject action = new JsonObject();
         action.addProperty("tool", "describe_node_types");
-        action.add("target", null);
+        if (target == null) action.add("target", null); else action.addProperty("target", target);
         JsonArray nodeTypes = new JsonArray();
         for (String type : types) nodeTypes.add(type);
         action.add("nodeTypes", nodeTypes);

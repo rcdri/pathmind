@@ -15,7 +15,7 @@ class AiGoldenGraphLibraryTest {
     void bundledExamplesAreDiscoverableAndPassSerializedValidation() {
         JsonArray examples = AiGoldenGraphLibrary.list();
 
-        assertEquals(3, examples.size());
+        assertEquals(4, examples.size());
         for (int index = 0; index < examples.size(); index++) {
             String id = examples.get(index).getAsJsonObject().get("id").getAsString();
             AiGoldenGraphLibrary.Entry entry = AiGoldenGraphLibrary.find(id).orElseThrow();
@@ -40,5 +40,14 @@ class AiGoldenGraphLibraryTest {
 
         assertEquals(1, matches.size());
         assertEquals("onboarding-3", matches.get(0).getAsJsonObject().get("id").getAsString());
+    }
+
+    @Test
+    void detailedMatchesPrioritizeTheMostRelevantExecutablePattern() {
+        JsonArray matches = AiGoldenGraphLibrary.detailsMatching(Set.of(NodeType.CONTROL_REPEAT, NodeType.JUMP), 2);
+
+        assertFalse(matches.isEmpty());
+        assertEquals("repeat-action", matches.get(0).getAsJsonObject().get("id").getAsString());
+        assertTrue(matches.get(0).getAsJsonObject().has("graph"));
     }
 }

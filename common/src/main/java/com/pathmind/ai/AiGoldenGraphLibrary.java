@@ -16,6 +16,7 @@ import java.util.Set;
 /** Curated, executable examples loaded from Pathmind's bundled presets rather than prompt literals. */
 public final class AiGoldenGraphLibrary {
     private static final List<Source> SOURCES = List.of(
+        new Source("repeat-action", "Repeat an attached action", "/assets/pathmind/ai_examples/repeat_action.json"),
         new Source("onboarding-1", "Onboarding example 1", "/assets/pathmind/onboarding_presets/example_1.json"),
         new Source("onboarding-2", "Onboarding example 2", "/assets/pathmind/onboarding_presets/example_2.json"),
         new Source("onboarding-3", "Onboarding example 3", "/assets/pathmind/onboarding_presets/example_3.json")
@@ -38,6 +39,21 @@ public final class AiGoldenGraphLibrary {
         for (Source source : SOURCES) {
             load(source).filter(entry -> containsAny(entry.graph(), requestedTypes))
                 .ifPresent(entry -> examples.add(summary(entry)));
+        }
+        return examples;
+    }
+
+    public static JsonArray detailsMatching(Set<NodeType> requestedTypes, int limit) {
+        JsonArray examples = new JsonArray();
+        if (requestedTypes == null || requestedTypes.isEmpty() || limit <= 0) return examples;
+        List<Entry> matches = new java.util.ArrayList<>();
+        for (Source source : SOURCES) load(source).filter(entry -> containsAny(entry.graph(), requestedTypes)).ifPresent(matches::add);
+        matches.sort(java.util.Comparator.comparingInt((Entry entry) -> matchScore(entry.graph(), requestedTypes)).reversed());
+        for (Entry entry : matches) {
+            if (examples.size() >= limit) break;
+            JsonObject detail = summary(entry);
+            detail.add("graph", new com.google.gson.Gson().toJsonTree(entry.graph()));
+            examples.add(detail);
         }
         return examples;
     }
@@ -80,6 +96,15 @@ public final class AiGoldenGraphLibrary {
     private static boolean containsAny(NodeGraphData graph, Set<NodeType> requestedTypes) {
         if (graph == null || graph.getNodes() == null) return false;
         return graph.getNodes().stream().anyMatch(node -> node != null && requestedTypes.contains(node.getType()));
+    }
+
+    private static int matchScore(NodeGraphData graph, Set<NodeType> requestedTypes) {
+        if (graph == null || graph.getNodes() == null) return 0;
+        Set<NodeType> present = new java.util.HashSet<>();
+        graph.getNodes().forEach(node -> { if (node != null && node.getType() != null) present.add(node.getType()); });
+        int score = 0;
+        for (NodeType requested : requestedTypes) if (present.contains(requested)) score++;
+        return score;
     }
 
     public record Entry(String id, String name, NodeGraphData graph) { }

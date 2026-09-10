@@ -5,6 +5,7 @@ import com.pathmind.ai.AiProviderRegistry;
 import com.pathmind.ai.AiProviderType;
 import com.pathmind.ui.control.PathmindWorkspaceChrome;
 import com.pathmind.ui.control.PathmindDropdownRenderer;
+import com.pathmind.ui.control.PathmindIconRenderer;
 import com.pathmind.ui.control.PathmindPopupRenderer;
 import com.pathmind.ui.animation.AnimatedValue;
 import com.pathmind.ui.animation.AnimationHelper;
@@ -32,6 +33,7 @@ final class PathmindAiPopupController {
     private enum Field { NONE, KEY, PROMPT }
     private enum ResizeCorner { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT }
     private static final int MIN_WIDTH = 185, MIN_HEIGHT = 220, DEFAULT_WIDTH = MIN_WIDTH, DEFAULT_HEIGHT = 310, HEADER = 22, COMPOSER_LINES = 3;
+    private static final int ACTION_BUTTON_SIZE = 16, ACTION_BUTTON_INSET = 4;
     private final Host host;
     private final AnimatedValue modelDropdownAnimation = AnimatedValue.forHover();
     private boolean visible, dragging, resizing, requesting, replaceOnType, modelDropdownOpen;
@@ -104,7 +106,7 @@ final class PathmindAiPopupController {
         c.fill(x + 10, composerY, x + width - 10, composerY + composerHeight, UITheme.BACKGROUND_PRIMARY);
         DrawBorder(c, x + 10, composerY, width - 20, composerHeight, activeField == Field.PROMPT ? accent : UITheme.BORDER_DEFAULT);
         String fieldText = prompt.isBlank() && activeField != Field.PROMPT ? "Ask " + provider.displayName() + " to create a preset…" : prompt;
-        int textWidth = Math.max(30, width - 78);
+        int textWidth = promptTextWidth();
         java.util.List<TextLine> promptLines = promptLines(f, fieldText, textWidth);
         if (activeField == Field.PROMPT) ensurePromptCursorVisible(promptLines);
         int lineY = composerY + 6;
@@ -115,12 +117,21 @@ final class PathmindAiPopupController {
             TextLine cursorLine = promptLines.get(lineIndex);
             int caretY = lineY + (lineIndex - promptScrollLine) * (f.lineHeight + 1);
             String beforeCursor = cursorLine.text().substring(0, Math.max(0, Math.min(promptCursor - cursorLine.start(), cursorLine.text().length())));
-            c.vLine(Math.min(x + width - 54, x + 17 + f.width(beforeCursor)), caretY, caretY + f.lineHeight, UITheme.CARET_COLOR);
+            c.vLine(Math.min(actionButtonX() - 4, x + 17 + f.width(beforeCursor)), caretY, caretY + f.lineHeight, UITheme.CARET_COLOR);
         }
-        String action = requesting ? "…" : "Send";
-        int actionX = x + width - 48;
-        UIStyleHelper.drawBeveledPanel(c, actionX, composerY + 5, 32, composerHeight - 10, accent, UITheme.BORDER_HIGHLIGHT, UITheme.PANEL_INNER_BORDER);
-        c.drawCenteredString(f, Component.literal(action), actionX + 16, composerY + composerHeight / 2 - f.lineHeight / 2, UITheme.TEXT_HEADER);
+        int actionX = actionButtonX();
+        int actionY = actionButtonY(composerY, composerHeight);
+        boolean actionHovered = !requesting && contains(mouseX, mouseY, actionX, actionY, ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE);
+        int actionBackground = actionHovered ? UITheme.BUTTON_DEFAULT_HOVER : accent;
+        int actionBorder = actionHovered ? UITheme.TEXT_HEADER : UITheme.BORDER_HIGHLIGHT;
+        UIStyleHelper.drawBeveledPanel(c, actionX, actionY, ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE,
+            actionBackground, actionBorder, UITheme.PANEL_INNER_BORDER);
+        if (requesting) {
+            PathmindIconRenderer.drawLoadingDots(c, actionX, actionY, ACTION_BUTTON_SIZE,
+                UITheme.TEXT_HEADER, System.currentTimeMillis());
+        } else {
+            PathmindIconRenderer.drawSendArrow(c, actionX, actionY, ACTION_BUTTON_SIZE, UITheme.TEXT_HEADER);
+        }
     }
 
     private void renderProposalActions(GuiGraphics c, Font f, int mouseX, int mouseY, int composerY, int accent) {
@@ -188,7 +199,19 @@ final class PathmindAiPopupController {
         if (pendingProposal != null && contains(mouseX, mouseY, x + 10, composerY - 20, 48, 16)) { applyPendingProposal(); return true; }
         if (pendingProposal != null && contains(mouseX, mouseY, x + 64, composerY - 20, 54, 16)) { discardPendingProposal(); return true; }
         if (contains(mouseX, mouseY, x + 12, y + HEADER + 4, 54, 13)) { clearConversation(); return true; }
-        if (contains(mouseX, mouseY, x + 10, composerY, width - 20, composerHeight)) { if (mouseX >= x + width - 48) activateAction(); else { activeField = Field.PROMPT; replaceOnType = false; promptCursor = promptIndexAt(mouseX, mouseY, composerY); promptAnchor = promptCursor; promptDragAnchor = promptCursor; promptSelecting = true; } return true; }
+        if (contains(mouseX, mouseY, x + 10, composerY, width - 20, composerHeight)) {
+            if (contains(mouseX, mouseY, actionButtonX(), actionButtonY(composerY, composerHeight), ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE)) {
+                if (!requesting) activateAction();
+            } else {
+                activeField = Field.PROMPT;
+                replaceOnType = false;
+                promptCursor = promptIndexAt(mouseX, mouseY, composerY);
+                promptAnchor = promptCursor;
+                promptDragAnchor = promptCursor;
+                promptSelecting = true;
+            }
+            return true;
+        }
         dragging = true; dragOffsetX = mouseX - x; dragOffsetY = mouseY - y; return true;
     }
     private boolean settingsClick(int mouseX, int mouseY) {
@@ -246,6 +269,7 @@ final class PathmindAiPopupController {
     boolean charTyped(char character) { if (!visible || activeField == Field.NONE || Character.isISOControl(character)) return visible; type(character); return true; }
 
     private void activateAction() {
+        if (requesting) return;
         if (prompt.isBlank()) { reportError("Describe the preset first."); return; }
         if (pendingProposal != null) { reportError("Apply or discard the pending proposal first."); return; }
         if (AiProviderRegistry.configured(provider).isEmpty()) { view = View.SETTINGS; reportError("Configure " + provider.displayName() + " first."); return; }
@@ -410,8 +434,11 @@ final class PathmindAiPopupController {
     private static java.util.List<String> wrap(Font font, String value, int maxWidth) { java.util.List<String> lines = new java.util.ArrayList<>(); for (TextLine line : lineSegments(font, value, maxWidth)) { lines.add(line.text()); if (lines.size() == 2) break; } return lines; }
     private int promptLineIndex(java.util.List<TextLine> lines, int cursor) { for (int i = 0; i < lines.size(); i++) if (cursor <= lines.get(i).end()) return i; return lines.size() - 1; }
     private void ensurePromptCursorVisible(java.util.List<TextLine> lines) { int line = promptLineIndex(lines, promptCursor); if (line < promptScrollLine) promptScrollLine = line; if (line >= promptScrollLine + COMPOSER_LINES) promptScrollLine = line - COMPOSER_LINES + 1; }
-    private void movePromptCursorVertically(int direction) { java.util.List<TextLine> lines = promptLines(currentFont, prompt, Math.max(30, width - 78)); int current = promptLineIndex(lines, promptCursor); int target = Math.max(0, Math.min(lines.size() - 1, current + direction)); int offset = Math.max(0, promptCursor - lines.get(current).start()); promptCursor = Math.min(lines.get(target).end(), lines.get(target).start() + offset); ensurePromptCursorVisible(lines); }
-    private int promptIndexAt(int mouseX, int mouseY, int composerY) { if (currentFont == null) return prompt.length(); java.util.List<TextLine> lines = promptLines(currentFont, prompt, Math.max(30, width - 78)); int line = Math.max(0, Math.min(lines.size() - 1, promptScrollLine + (mouseY - composerY - 6) / (currentFont.lineHeight + 1))); TextLine target = lines.get(line); int relativeX = Math.max(0, mouseX - (x + 17)); int offset = 0; while (offset < target.text().length() && currentFont.width(target.text().substring(0, offset + 1)) <= relativeX) offset++; return target.start() + offset; }
+    private int promptTextWidth() { return Math.max(30, actionButtonX() - (x + 17) - 4); }
+    private int actionButtonX() { return x + width - 10 - ACTION_BUTTON_INSET - ACTION_BUTTON_SIZE; }
+    private static int actionButtonY(int composerY, int composerHeight) { return composerY + composerHeight - ACTION_BUTTON_INSET - ACTION_BUTTON_SIZE; }
+    private void movePromptCursorVertically(int direction) { java.util.List<TextLine> lines = promptLines(currentFont, prompt, promptTextWidth()); int current = promptLineIndex(lines, promptCursor); int target = Math.max(0, Math.min(lines.size() - 1, current + direction)); int offset = Math.max(0, promptCursor - lines.get(current).start()); promptCursor = Math.min(lines.get(target).end(), lines.get(target).start() + offset); ensurePromptCursorVisible(lines); }
+    private int promptIndexAt(int mouseX, int mouseY, int composerY) { if (currentFont == null) return prompt.length(); java.util.List<TextLine> lines = promptLines(currentFont, prompt, promptTextWidth()); int line = Math.max(0, Math.min(lines.size() - 1, promptScrollLine + (mouseY - composerY - 6) / (currentFont.lineHeight + 1))); TextLine target = lines.get(line); int relativeX = Math.max(0, mouseX - (x + 17)); int offset = 0; while (offset < target.text().length() && currentFont.width(target.text().substring(0, offset + 1)) <= relativeX) offset++; return target.start() + offset; }
     private void renderPromptSelection(GuiGraphics c, Font f, java.util.List<TextLine> lines, int lineY) { int start = Math.min(promptAnchor, promptCursor), end = Math.max(promptAnchor, promptCursor); for (int i = promptScrollLine; i < lines.size() && i < promptScrollLine + COMPOSER_LINES; i++) { TextLine line = lines.get(i); int selectedStart = Math.max(start, line.start()), selectedEnd = Math.min(end, line.end()); if (selectedEnd <= selectedStart) continue; int left = x + 17 + f.width(line.text().substring(0, selectedStart - line.start())); int right = x + 17 + f.width(line.text().substring(0, selectedEnd - line.start())); int top = lineY + (i - promptScrollLine) * (f.lineHeight + 1); c.fill(left, top - 1, right, top + f.lineHeight + 1, 0x664F86C6); } }
     private void insertPromptText(String value) { if (value == null || value.isEmpty()) return; String cleaned = value.replace("\r", ""); int start = Math.min(promptAnchor, promptCursor), end = Math.max(promptAnchor, promptCursor); int remaining = 2048 - (prompt.length() - (end - start)); if (remaining <= 0) return; String inserted = cleaned.length() > remaining ? cleaned.substring(0, remaining) : cleaned; prompt = prompt.substring(0, start) + inserted + prompt.substring(end); promptCursor = start + inserted.length(); promptAnchor = promptCursor; }
     private void deletePromptSelection() { int start = Math.min(promptAnchor, promptCursor), end = Math.max(promptAnchor, promptCursor); if (start == end) return; prompt = prompt.substring(0, start) + prompt.substring(end); promptCursor = start; promptAnchor = start; }

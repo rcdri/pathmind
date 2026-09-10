@@ -18,7 +18,7 @@ public final class AiAgentTurnSchema {
         return object(
             property("tool", enumString("select_target", "inspect_preset", "list_node_types", "describe_node_types",
                 "list_examples", "inspect_example", "apply_graph_patch", "validate_graph", "preview_execution", "finish")),
-            property("target", nullable(enumString("new", "current", "inspect"))),
+            property("target", enumString("new", "current", "inspect")),
             property("nodeTypes", array(enumValues(NodeType.values()))),
             property("exampleId", nullable(string())),
             property("draftRevision", nullable(integer())),

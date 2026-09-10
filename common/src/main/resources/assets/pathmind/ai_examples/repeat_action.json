@@ -1,0 +1,50 @@
+{
+  "nodes": [
+    {
+      "id": "start",
+      "type": "START",
+      "x": 0,
+      "y": 80,
+      "parameters": [],
+      "parameterAttachments": [],
+      "startNodeNumber": 1,
+      "startLaunchMode": "manual"
+    },
+    {
+      "id": "repeat",
+      "type": "CONTROL_REPEAT",
+      "x": 190,
+      "y": 80,
+      "parameters": [
+        {
+          "id": "count",
+          "name": "Count",
+          "value": "100",
+          "type": "INTEGER",
+          "userEdited": true
+        }
+      ],
+      "attachedActionId": "action",
+      "parameterAttachments": []
+    },
+    {
+      "id": "action",
+      "type": "JUMP",
+      "x": 210,
+      "y": 145,
+      "parameters": [],
+      "parentActionControlId": "repeat",
+      "parameterAttachments": []
+    }
+  ],
+  "connections": [
+    {
+      "outputNodeId": "start",
+      "inputNodeId": "repeat",
+      "outputSocket": 0,
+      "inputSocket": 0
+    }
+  ],
+  "customNodeDefinition": null,
+  "routines": []
+}
