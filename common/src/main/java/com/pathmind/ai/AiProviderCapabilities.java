@@ -4,4 +4,5 @@ package com.pathmind.ai;
 public record AiProviderCapabilities(boolean structuredOutput, boolean nativeFunctionTools) {
     public static final AiProviderCapabilities TEXT_ONLY = new AiProviderCapabilities(false, false);
     public static final AiProviderCapabilities STRUCTURED_OUTPUT = new AiProviderCapabilities(true, false);
+    public static final AiProviderCapabilities NATIVE_TOOLS = new AiProviderCapabilities(true, true);
 }

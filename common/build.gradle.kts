@@ -84,6 +84,18 @@ tasks.test {
     useJUnitPlatform()
 }
 
+tasks.register<JavaExec>("aiEval") {
+    group = "verification"
+    description = "Offline corpus check by default; opt-in live AI behavioral benchmark."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets["test"].runtimeClasspath
+    mainClass.set("com.pathmind.ai.AiBehaviorEvalRunner")
+    listOf("aiEvalLive", "aiEvalProvider", "aiEvalModel", "aiEvalLimit", "aiEvalDifficulty",
+        "aiEvalEndpoint", "aiEvalPricing", "aiEvalOutput", "aiEvalCases", "aiEvalRepeats").forEach { key ->
+        providers.gradleProperty(key).orNull?.let { systemProperty(key, it) }
+    }
+}
+
 tasks.matching { it.name == "runClient" || it.name == "runServer" }.configureEach {
     enabled = false
     description = "Disabled for the common project; use :fabric:$name, :neoforge:$name, or the root runFabric*/runNeoForge* tasks."

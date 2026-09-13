@@ -701,9 +701,11 @@ public class NodeParameterOverlay {
             if ("Direction".equalsIgnoreCase(name)) {
                 return !exactMode;
             }
+            if ("Distance".equalsIgnoreCase(name)) {
+                return false;
+            }
             if ("Yaw".equalsIgnoreCase(name)
-                || "Pitch".equalsIgnoreCase(name)
-                || "Distance".equalsIgnoreCase(name)) {
+                || "Pitch".equalsIgnoreCase(name)) {
                 return exactMode;
             }
         }

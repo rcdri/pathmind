@@ -62,6 +62,14 @@ class AiGraphIntegrityValidatorTest {
     }
 
     @Test
+    void acceptsPersistedInternalModeForFixedBehaviorNodes() {
+        NodeGraphData.NodeData open = node("open", NodeType.OPEN_INVENTORY);
+        open.setMode(NodeMode.PLAYER_GUI_OPEN);
+
+        assertTrue(AiGraphIntegrityValidator.validate(graph(List.of(open), List.of()), true, true).isEmpty());
+    }
+
+    @Test
     void rejectsMissingRequiredAttachmentAndWrongCatalogParameterType() {
         NodeGraphData.NodeData control = node("control", NodeType.CONTROL_FOREVER);
         NodeGraphData.NodeData wait = node("wait", NodeType.WAIT);

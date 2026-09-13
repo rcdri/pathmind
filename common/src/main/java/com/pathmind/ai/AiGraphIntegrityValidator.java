@@ -62,7 +62,10 @@ public final class AiGraphIntegrityValidator {
             }
             NodeMode mode = data.getMode();
             NodeMode[] modes = NodeMode.getModesForNodeType(type);
-            if (mode != null && Arrays.stream(modes).noneMatch(candidate -> candidate == mode)) {
+            // Some fixed-behavior nodes persist an internal default mode even though they expose no
+            // user-selectable modes. Only constrain mode values when the catalog declares choices.
+            if (mode != null && ((modes.length > 0 && Arrays.stream(modes).noneMatch(candidate -> candidate == mode))
+                || (modes.length == 0 && mode != NodeMode.getDefaultModeForNodeType(type)))) {
                 issues.add("Node '" + id + "' uses mode " + mode + ", which is not valid for " + type + ".");
             }
             Node specimen = new Node(type, data.getX(), data.getY());

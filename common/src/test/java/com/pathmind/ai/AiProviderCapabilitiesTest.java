@@ -15,8 +15,8 @@ class AiProviderCapabilitiesTest {
 
         assertTrue(official.capabilities().structuredOutput());
         assertFalse(compatible.capabilities().structuredOutput());
-        assertFalse(anthropic.capabilities().structuredOutput());
-        assertFalse(gemini.capabilities().structuredOutput());
-        assertFalse(official.capabilities().nativeFunctionTools());
+        assertTrue(anthropic.capabilities().nativeFunctionTools());
+        assertTrue(gemini.capabilities().nativeFunctionTools());
+        assertTrue(official.capabilities().nativeFunctionTools());
     }
 }

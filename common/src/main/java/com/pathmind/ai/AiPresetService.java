@@ -51,6 +51,16 @@ public final class AiPresetService {
             baritoneAvailable, uiUtilsAvailable);
     }
 
+    public static CompletableFuture<Proposal> request(AiProviderType provider, String model, String prompt,
+                                                       boolean baritoneAvailable, boolean uiUtilsAvailable,
+                                                       NodeGraphData activeGraph, String activePresetName, String conversation,
+                                                       AiRequestControl control) {
+        AiProvider configured = AiProviderRegistry.configured(provider)
+            .orElseThrow(() -> new IllegalStateException("Configure and enable an AI provider in Settings first."));
+        return AiPresetAgent.run(configured, model, prompt, conversation, activeGraph, activePresetName,
+            baritoneAvailable, uiUtilsAvailable, control);
+    }
+
     public static Proposal parseProposal(String content) {
         JsonObject response = JsonParser.parseString(stripCodeFence(content)).getAsJsonObject();
         String target = string(response, "target", "new").toLowerCase(java.util.Locale.ROOT);
@@ -63,9 +73,10 @@ public final class AiPresetService {
         }
         List<String> workLog = new ArrayList<>();
         if (response.has("workLog") && response.get("workLog").isJsonArray()) response.getAsJsonArray("workLog").forEach(entry -> {
-            if (workLog.size() < 4) workLog.add(shortText(entry.getAsString(), 120));
+            if (workLog.size() >= 100) throw new IllegalArgumentException("AI returned too many detail messages; no truncated proposal was saved.");
+            workLog.add(AiDisplayText.detail(entry.getAsString()));
         });
-        return new Proposal(string(response, "title", "Untitled AI preset"), shortText(string(response, "response", string(response, "description", "")), 280), workLog, graph, target);
+        return new Proposal(string(response, "title", "Untitled AI preset"), AiDisplayText.message(string(response, "response", string(response, "description", ""))), workLog, graph, target);
     }
 
     /** Runs lossless serialized checks before the normal runtime validator. */
@@ -102,11 +113,6 @@ public final class AiPresetService {
         return List.copyOf(ordered.subList(0, Math.min(12, ordered.size())));
     }
 
-    private static String shortText(String value, int limit) {
-        String normalized = value == null ? "" : value.trim().replaceAll("\\s+", " ");
-        return normalized.length() <= limit ? normalized : normalized.substring(0, Math.max(1, limit - 1)) + "…";
-    }
-
     private static String string(JsonObject json, String key, String fallback) {
         return json.has(key) && !json.get(key).isJsonNull() ? json.get(key).getAsString() : fallback;
     }
@@ -136,7 +142,12 @@ public final class AiPresetService {
     }
 
     public record Proposal(String title, String response, List<String> workLog, NodeGraphData graph, String target,
-                           String sourceFingerprint, AiProposalReview review) {
+                           String sourceFingerprint, AiProposalReview review, AiCompletionOutcome outcome) {
+        public Proposal(String title, String response, List<String> workLog, NodeGraphData graph, String target,
+                        String sourceFingerprint, AiProposalReview review) {
+            this(title, response, workLog, graph, target, sourceFingerprint, review,
+                graph == null ? AiCompletionOutcome.ANSWER : AiCompletionOutcome.PROPOSAL);
+        }
         public Proposal(String title, String response, List<String> workLog, NodeGraphData graph, String target) {
             this(title, response, workLog, graph, target, "", null);
         }

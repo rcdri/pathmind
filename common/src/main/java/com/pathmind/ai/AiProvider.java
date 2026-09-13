@@ -8,4 +8,10 @@ public interface AiProvider {
     }
 
     CompletableFuture<String> generate(AiPresetRequest request);
+
+    default String providerId() { return getClass().getSimpleName(); }
+
+    default AiProviderSession openSession() {
+        return (request, previousToolResult) -> generate(request).thenApply(content -> new AiModelTurn(content, AiTokenUsage.UNKNOWN));
+    }
 }

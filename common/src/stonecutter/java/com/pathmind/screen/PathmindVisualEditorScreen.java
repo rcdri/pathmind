@@ -244,10 +244,15 @@ public class PathmindVisualEditorScreen extends Screen {
 
     private final class AiPopupHost implements PathmindAiPopupController.Host {
         @Override
-        public void requestAiProposal(AiProviderType provider, String prompt, String conversation, java.util.function.Consumer<AiPresetService.Proposal> success,
-                                      java.util.function.Consumer<String> failure) {
+        public void requestAiProposal(AiProviderType provider, String prompt, String conversation, com.pathmind.ai.AiRequestControl control,
+                                      java.util.function.Consumer<AiPresetService.Proposal> success, java.util.function.Consumer<String> failure) {
             String model = AiProviderRegistry.config(provider).model;
-            AiPresetService.request(provider, model, prompt, baritoneAvailable, uiUtilsAvailable, nodeGraph.exportGraphDataSnapshot(), presetWorkspaceController.activePresetName(), conversation)
+            var snapshot = nodeGraph.exportGraphDataSnapshot();
+            String preset = presetWorkspaceController.activePresetName();
+            var selection = nodeGraph.getSelectedNodes().stream().map(com.pathmind.nodes.Node::getId).toList();
+            if (selection.isEmpty() && nodeGraph.getSelectedNode() != null) selection = java.util.List.of(nodeGraph.getSelectedNode().getId());
+            String context = com.pathmind.ai.AiWorkspaceContext.attach(conversation, preset, snapshot, selection);
+            AiPresetService.request(provider, model, prompt, baritoneAvailable, uiUtilsAvailable, snapshot, preset, context, control)
                 .whenComplete((proposal, throwable) -> {
                     Runnable update = () -> {
                         if (throwable != null) failure.accept(throwable.getCause() == null ? throwable.getMessage() : throwable.getCause().getMessage());
@@ -2993,6 +2998,7 @@ public class PathmindVisualEditorScreen extends Screen {
 
     @Override
     public void removed() {
+        aiPopupController.dispose();
         nodeGraph.persistSessionViewportState();
         autoSaveWorkspace();
         if (uiUtilsOverlayPrevEnabled != null) {

@@ -3,15 +3,24 @@ package com.pathmind.screen;
 import com.pathmind.ai.AiPresetService;
 import com.pathmind.ai.AiProviderRegistry;
 import com.pathmind.ai.AiProviderType;
+import com.pathmind.ai.AiChatHistoryStore;
+import com.pathmind.ai.AiChatHistoryStore.Role;
+import com.pathmind.ai.AiChatLayout;
+import com.pathmind.ai.AiChatScrollState;
+import com.pathmind.ai.AiRequestControl;
+import com.pathmind.ai.AiRequestProgress;
 import com.pathmind.ui.control.PathmindWorkspaceChrome;
 import com.pathmind.ui.control.PathmindDropdownRenderer;
 import com.pathmind.ui.control.PathmindIconRenderer;
 import com.pathmind.ui.control.PathmindPopupRenderer;
 import com.pathmind.ui.animation.AnimatedValue;
 import com.pathmind.ui.animation.AnimationHelper;
+import com.pathmind.ui.animation.HoverAnimator;
+import com.pathmind.ui.tooltip.TooltipRenderer;
 import com.pathmind.ui.theme.UIStyleHelper;
 import com.pathmind.ui.theme.UITheme;
 import com.pathmind.util.DropdownLayoutHelper;
+import com.pathmind.util.ScrollbarHelper;
 import java.util.function.Consumer;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
@@ -23,13 +32,13 @@ import org.lwjgl.glfw.GLFW;
 /** A resizable, non-modal AI workspace that stays alongside the graph editor. */
 final class PathmindAiPopupController {
     interface Host {
-        void requestAiProposal(AiProviderType provider, String prompt, String conversation, Consumer<AiPresetService.Proposal> success, Consumer<String> failure);
+        void requestAiProposal(AiProviderType provider, String prompt, String conversation, AiRequestControl control, Consumer<AiPresetService.Proposal> success, Consumer<String> failure);
         String applyAiProposal(AiPresetService.Proposal proposal);
         String activePresetName();
         com.pathmind.data.NodeGraphData activeGraph();
         void showAiError(String message);
     }
-    private enum View { CHAT, SETTINGS }
+    private enum View { CHAT, SETTINGS, MEMORY }
     private enum Field { NONE, KEY, PROMPT }
     private enum ResizeCorner { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT }
     private static final int MIN_WIDTH = 185, MIN_HEIGHT = 220, DEFAULT_WIDTH = MIN_WIDTH, DEFAULT_HEIGHT = 310, HEADER = 22, COMPOSER_LINES = 3;
@@ -45,31 +54,64 @@ final class PathmindAiPopupController {
     private String apiKey = "", model = provider.defaultModel(), prompt = "", status = "";
     private AiPresetService.Proposal pendingProposal;
     private Font currentFont;
-    private int promptCursor, promptScrollLine, promptAnchor, promptDragAnchor, thinkingScrollOffset;
+    private int promptCursor, promptScrollLine, promptAnchor, promptDragAnchor;
     private boolean promptSelecting;
     private long requestStartedAt;
-    private final java.util.EnumMap<AiProviderType, java.util.List<ChatLine>> conversationHistory = new java.util.EnumMap<>(AiProviderType.class);
+    private final AiChatHistoryStore conversationHistory;
     private int conversationGeneration;
+    private boolean resetArmed;
+    private long pendingHistoryGeneration;
+    private AiProviderType cachedHistoryProvider;
+    private long cachedHistoryRevision = -1;
+    private java.util.List<ChatLine> cachedHistory = java.util.List.of();
+    private Font cachedThinkingFont;
+    private AiProviderType cachedThinkingProvider;
+    private int cachedThinkingWidth;
+    private long cachedThinkingRevision = -1;
+    private boolean cachedThinkingRequesting;
+    private String cachedThinkingStatus = "";
+    private java.util.List<AiChatLayout.Row> cachedThinkingLines = java.util.List.of();
+    private final AiChatScrollState chatScroll = new AiChatScrollState();
+    private final java.util.Set<Integer> expandedDetails = new java.util.HashSet<>();
+    private boolean scrollbarDragging;
+    private int scrollbarGrab;
+    private AiRequestControl requestControl;
+    private String progressLabel = "";
+    private String savedDraft = "";
+    private final java.util.Map<String, Object> buttonHoverKeys = new java.util.HashMap<>();
+    private final java.util.Set<String> renderedButtonKeys = new java.util.HashSet<>();
+    private int renderMouseX, renderMouseY;
+    private String hoveredTooltip;
 
-    PathmindAiPopupController(Host host) { this.host = host; }
+    PathmindAiPopupController(Host host) {
+        this.host = host;
+        conversationHistory = AiChatHistoryStore.open(Minecraft.getInstance().gameDirectory.toPath().resolve("pathmind"));
+    }
     boolean isVisible() { return visible; }
     void open(int screenWidth, int screenHeight) {
         if (x < 0 || y < 0) { x = Math.max(10, screenWidth - width - 55); y = 28; }
         clampToScreen(screenWidth, screenHeight);
         view = AiProviderRegistry.hasConfiguredProvider() ? View.CHAT : View.SETTINGS;
         model = configuredModel(); visible = true;
+        if (!conversationHistory.warning().isBlank()) status = conversationHistory.warning();
     }
-    void close() { visible = false; dragging = false; resizing = false; modelDropdownOpen = false; activeField = Field.NONE; }
+    void close() { if (view == View.MEMORY) leaveMemory(); visible = false; dragging = false; resizing = false; scrollbarDragging = false; modelDropdownOpen = false; activeField = Field.NONE; resetArmed = false; }
 
     void render(GuiGraphics c, Font font, int mouseX, int mouseY, int accent) {
         if (!visible) return;
         currentFont = font;
+        renderMouseX = mouseX; renderMouseY = mouseY; hoveredTooltip = null;
+        renderedButtonKeys.clear();
         UIStyleHelper.drawBeveledPanel(c, x, y, width, height, UITheme.BACKGROUND_SECONDARY, UITheme.BORDER_DEFAULT, UITheme.PANEL_INNER_BORDER);
         c.fill(x + 1, y + 1, x + width - 1, y + HEADER, UITheme.BACKGROUND_SECTION);
         if (view == View.CHAT) renderChatHeader(c, font, mouseX, mouseY, accent); else renderSettingsHeader(c, font, mouseX, mouseY, accent);
         c.hLine(x + 1, x + width - 2, y + HEADER, UITheme.BORDER_SUBTLE);
-        if (view == View.CHAT) renderChat(c, font, mouseX, mouseY, accent); else renderSettings(c, font, mouseX, mouseY, accent);
+        if (view != View.SETTINGS) renderChat(c, font, mouseX, mouseY, accent); else renderSettings(c, font, mouseX, mouseY, accent);
         renderCornerHandles(c);
+        buttonHoverKeys.forEach((key, identity) -> { if (!renderedButtonKeys.contains(key)) HoverAnimator.getProgress(identity, false); });
+        buttonHoverKeys.keySet().removeIf(key -> key.startsWith("details-") && !renderedButtonKeys.contains(key));
+        if (hoveredTooltip != null) TooltipRenderer.render(c, font, hoveredTooltip, mouseX, mouseY,
+            Minecraft.getInstance().getWindow().getGuiScaledWidth(), Minecraft.getInstance().getWindow().getGuiScaledHeight());
     }
 
     private void renderChatHeader(GuiGraphics c, Font f, int mouseX, int mouseY, int accent) {
@@ -80,32 +122,34 @@ final class PathmindAiPopupController {
             drawTab(c, f, tabLabel(candidate), tabX, y + 3, tabWidth, selected, mouseX, mouseY, accent);
             tabX += tabWidth + 2;
         }
-        PathmindWorkspaceChrome.drawSettingsIcon(c, x + width - 38, y + 2, 18, UITheme.TEXT_PRIMARY);
-        c.drawString(f, Component.literal("×"), x + width - 14, y + 8, UITheme.TEXT_PRIMARY);
+        int settingsColor = iconButton(c, "settings", x + width - 38, y + 2, 18, 18, accent, false, "AI settings");
+        PathmindWorkspaceChrome.drawSettingsIcon(c, x + width - 38, y + 2, 18, settingsColor);
+        renderClose(c, f);
     }
 
     private void renderSettingsHeader(GuiGraphics c, Font f, int mouseX, int mouseY, int accent) {
-        boolean backHovered = contains(mouseX, mouseY, x + 7, y + 2, 48, 18);
-        c.drawString(f, Component.literal("← Back"), x + 9, y + 8, backHovered ? UITheme.TEXT_HEADER : accent);
-        c.drawString(f, Component.literal("AI settings"), x + width / 2 - f.width("AI settings") / 2, y + 8, UITheme.TEXT_HEADER);
-        c.drawString(f, Component.literal("×"), x + width - 14, y + 8, UITheme.TEXT_PRIMARY);
+        textButton(c, f, "back", "← Back", x + 7, y + 2, 48, 18, UIStyleHelper.TextButtonStyle.DEFAULT, accent, null);
+        String heading = view == View.MEMORY ? "Context" : "AI settings";
+        c.drawString(f, Component.literal(heading), x + width / 2 - f.width(heading) / 2, y + 8, UITheme.TEXT_HEADER);
+        renderClose(c, f);
     }
 
     private void renderChat(GuiGraphics c, Font f, int mouseX, int mouseY, int accent) {
         boolean connected = AiProviderRegistry.configured(provider).isPresent();
         int composerHeight = COMPOSER_LINES * (f.lineHeight + 1) + 12;
         int composerY = y + height - composerHeight - 12;
-        String headline = connected ? "Describe the preset you want to build" : "Configure " + provider.displayName() + " to begin";
-        renderClearContextButton(c, f, mouseX, mouseY, accent);
-        if (!requesting && requestStartedAt == 0) {
-            drawCenteredWrapped(c, f, headline, x + width / 2, y + HEADER + 24, width - 24, 2, UITheme.TEXT_TERTIARY);
+        String headline = connected ? "Ask a question or describe a preset change" : "Configure " + provider.displayName() + " to begin";
+        if (view == View.CHAT) renderClearContextButton(c, f, mouseX, mouseY, accent);
+        else textButton(c, f, "clear-summary", "Clear summary", x + 12, y + HEADER + 4, 90, 16, UIStyleHelper.TextButtonStyle.DEFAULT, accent, "Clear the advisory conversation summary");
+        if (!requesting && history().isEmpty()) {
+            drawCenteredWrapped(c, f, headline, x + width / 2, y + HEADER + 40, width - 24, 2, UITheme.TEXT_TERTIARY);
         }
-        if (requesting || requestStartedAt > 0) renderThinking(c, f, composerY - (pendingProposal == null ? 10 : 25));
+        if (view == View.MEMORY || requesting || !history().isEmpty() || status.startsWith("Error")) renderThinking(c, f, chatBottomY());
         else if (!status.isBlank()) renderActivity(c, f, status.startsWith("Error") ? "Error" : "Result", status, composerY - 18, status.startsWith("Error") ? UITheme.STATE_ERROR : UITheme.TEXT_SECONDARY);
-        renderProposalActions(c, f, mouseX, mouseY, composerY, accent);
+        if (view == View.CHAT) renderProposalActions(c, f, mouseX, mouseY, composerY, accent);
         c.fill(x + 10, composerY, x + width - 10, composerY + composerHeight, UITheme.BACKGROUND_PRIMARY);
         DrawBorder(c, x + 10, composerY, width - 20, composerHeight, activeField == Field.PROMPT ? accent : UITheme.BORDER_DEFAULT);
-        String fieldText = prompt.isBlank() && activeField != Field.PROMPT ? "Ask " + provider.displayName() + " to create a preset…" : prompt;
+        String fieldText = prompt.isBlank() && activeField != Field.PROMPT ? view == View.MEMORY ? "Your preferences (optional)…" : "Ask " + provider.displayName() + "…" : prompt;
         int textWidth = promptTextWidth();
         java.util.List<TextLine> promptLines = promptLines(f, fieldText, textWidth);
         if (activeField == Field.PROMPT) ensurePromptCursorVisible(promptLines);
@@ -121,16 +165,20 @@ final class PathmindAiPopupController {
         }
         int actionX = actionButtonX();
         int actionY = actionButtonY(composerY, composerHeight);
-        boolean actionHovered = !requesting && contains(mouseX, mouseY, actionX, actionY, ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE);
-        int actionBackground = actionHovered ? UITheme.BUTTON_DEFAULT_HOVER : accent;
-        int actionBorder = actionHovered ? UITheme.TEXT_HEADER : UITheme.BORDER_HIGHLIGHT;
-        UIStyleHelper.drawBeveledPanel(c, actionX, actionY, ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE,
-            actionBackground, actionBorder, UITheme.PANEL_INNER_BORDER);
+        String actionTooltip = !requesting && view == View.MEMORY ? "Save preferences" : null;
+        var actionPalette = buttonFrame(c, "send-stop", actionX, actionY, ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE,
+            requesting ? UIStyleHelper.TextButtonStyle.DANGER : UIStyleHelper.TextButtonStyle.PRIMARY, accent, actionTooltip);
         if (requesting) {
-            PathmindIconRenderer.drawLoadingDots(c, actionX, actionY, ACTION_BUTTON_SIZE,
-                UITheme.TEXT_HEADER, System.currentTimeMillis());
+            c.fill(actionX + 5, actionY + 5, actionX + 11, actionY + 11, actionPalette.textColor());
         } else {
-            PathmindIconRenderer.drawSendArrow(c, actionX, actionY, ACTION_BUTTON_SIZE, UITheme.TEXT_HEADER);
+            PathmindIconRenderer.drawSendArrow(c, actionX, actionY, ACTION_BUTTON_SIZE, actionPalette.textColor());
+        }
+        if (requesting) PathmindIconRenderer.drawLoadingDots(c, x + 10, y + HEADER + 5, 16, UITheme.TEXT_HEADER, System.currentTimeMillis());
+        String activity = view == View.MEMORY ? "" : requesting ? progressLabel : pendingProposal != null ? "Awaiting review" : status;
+        c.drawString(f, Component.literal(trim(activity, Math.max(1, (width - (requesting ? 62 : 42)) / 6))),
+            x + (requesting ? 29 : 12), y + HEADER + 8, status.startsWith("Error") ? UITheme.STATE_ERROR : UITheme.TEXT_SECONDARY);
+        if (!chatScroll.atEnd()) {
+            textButton(c, f, "latest", "↓ Latest", x + width - 68, chatBottomY() + 1, 58, 13, UIStyleHelper.TextButtonStyle.DEFAULT, accent, null);
         }
     }
 
@@ -139,24 +187,17 @@ final class PathmindAiPopupController {
         int buttonY = composerY - 20;
         int applyWidth = 48;
         int discardWidth = 54;
-        boolean applyHovered = contains(mouseX, mouseY, x + 10, buttonY, applyWidth, 16);
-        boolean discardHovered = contains(mouseX, mouseY, x + 64, buttonY, discardWidth, 16);
-        UIStyleHelper.drawToolbarButtonFrame(c, x + 10, buttonY, applyWidth, 16,
-            applyHovered ? UITheme.BUTTON_DEFAULT_HOVER : UITheme.BUTTON_DEFAULT_BG,
-            applyHovered ? accent : UITheme.BORDER_DEFAULT, UITheme.PANEL_INNER_BORDER);
-        UIStyleHelper.drawToolbarButtonFrame(c, x + 64, buttonY, discardWidth, 16,
-            discardHovered ? UITheme.BUTTON_DEFAULT_HOVER : UITheme.BUTTON_DEFAULT_BG,
-            discardHovered ? UITheme.STATE_ERROR : UITheme.BORDER_DEFAULT, UITheme.PANEL_INNER_BORDER);
-        c.drawCenteredString(f, Component.literal("Apply"), x + 10 + applyWidth / 2, buttonY + 4, applyHovered ? UITheme.TEXT_PRIMARY : UITheme.TEXT_SECONDARY);
-        c.drawCenteredString(f, Component.literal("Discard"), x + 64 + discardWidth / 2, buttonY + 4, discardHovered ? UITheme.TEXT_PRIMARY : UITheme.TEXT_SECONDARY);
+        textButton(c, f, "apply", "Apply", x + 10, buttonY, applyWidth, 16, UIStyleHelper.TextButtonStyle.PRIMARY, accent, "Apply the reviewed proposal");
+        textButton(c, f, "discard", "Discard", x + 64, buttonY, discardWidth, 16, UIStyleHelper.TextButtonStyle.DANGER, accent, "Discard without changing the preset");
     }
 
     private void renderClearContextButton(GuiGraphics c, Font f, int mouseX, int mouseY, int accent) {
-        int bx = x + 12, by = y + HEADER + 4, bw = 54;
-        boolean hovered = contains(mouseX, mouseY, bx, by, bw, 13);
-        UIStyleHelper.drawToolbarButtonFrame(c, bx, by, bw, 13, UITheme.BUTTON_DEFAULT_BG, hovered ? accent : UITheme.BORDER_DEFAULT, UITheme.PANEL_INNER_BORDER);
-        c.drawCenteredString(f, Component.literal("Clear"), bx + bw / 2, by + 3, hovered ? UITheme.TEXT_PRIMARY : UITheme.TEXT_SECONDARY);
+        int bx = resetButtonX(), by = y + HEADER + 4;
+        int iconColor = iconButton(c, "clear-history", bx, by, 16, 16, resetArmed ? UITheme.STATE_ERROR : accent,
+            resetArmed, resetArmed ? "Click again to reset chat & context. Preferences are kept." : "Reset chat & context. Click twice to confirm; preferences are kept.");
+        PathmindWorkspaceChrome.drawClearIcon(c, bx, by, 16, resetArmed ? UITheme.STATE_ERROR : iconColor);
     }
+    private int resetButtonX() { return x + width - 26; }
 
     private void renderSettings(GuiGraphics c, Font f, int mouseX, int mouseY, int accent) {
         modelDropdownAnimation.animateTo(modelDropdownOpen ? 1f : 0f, UITheme.TRANSITION_ANIM_MS, AnimationHelper::easeOutQuad);
@@ -175,8 +216,8 @@ final class PathmindAiPopupController {
         renderModelDropdown(c, f, modelY + 12, mouseX, mouseY, accent);
         drawWrapped(c, f, "Stored encrypted in your local Pathmind settings.", x + 12, modelY + 43, width - 24, 2, UITheme.TEXT_TERTIARY);
         int saveX = x + width - 72, saveY = y + height - 30;
-        c.fill(saveX, saveY, saveX + 60, saveY + 18, accent);
-        c.drawCenteredString(f, Component.literal("Save"), saveX + 30, saveY + 5, UITheme.TEXT_HEADER);
+        textButton(c, f, "context", "Context & preferences →", x + 12, saveY - 24, width - 24, 18, UIStyleHelper.TextButtonStyle.DEFAULT, accent, null);
+        textButton(c, f, "save-settings", "Save", saveX, saveY, 60, 18, UIStyleHelper.TextButtonStyle.PRIMARY, accent, null);
         renderModelDropdownOptions(c, f, modelY + 12, mouseX, mouseY, accent);
     }
 
@@ -188,20 +229,52 @@ final class PathmindAiPopupController {
         activeField = Field.NONE;
         if (contains(mouseX, mouseY, x + width - 18, y + 2, 16, 18)) { close(); return true; }
         if (view == View.CHAT) return chatClick(mouseX, mouseY);
+        if (view == View.MEMORY) {
+            if (contains(mouseX, mouseY, x + 7, y + 2, 48, 18)) { leaveMemory(); return true; }
+            if (contains(mouseX, mouseY, x + 12, y + HEADER + 4, 90, 16)) {
+                try { conversationHistory.clearSummary(provider); cachedThinkingRevision = -1; }
+                catch (IllegalStateException failure) { reportError(failure.getMessage()); }
+                return true;
+            }
+            return chatClick(mouseX, mouseY);
+        }
         return settingsClick(mouseX, mouseY);
     }
     private boolean chatClick(int mouseX, int mouseY) {
-        if (contains(mouseX, mouseY, x + width - 38, y + 2, 18, 18)) { view = View.SETTINGS; modelDropdownOpen = false; return true; }
+        if (view == View.CHAT && contains(mouseX, mouseY, resetButtonX(), y + HEADER + 4, 16, 16)) {
+            if (resetArmed) clearConversation(); else resetArmed = true;
+            return true;
+        }
+        resetArmed = false;
+        if (view == View.CHAT && contains(mouseX, mouseY, x + width - 38, y + 2, 18, 18)) { view = View.SETTINGS; modelDropdownOpen = false; return true; }
         int tabX = x + 9;
-        for (AiProviderType candidate : supportedProviders()) { int tabWidth = tabLabel(candidate).length() * 6 + 14; if (contains(mouseX, mouseY, tabX, y + 3, tabWidth, HEADER - 4)) { selectProvider(candidate); return true; } tabX += tabWidth + 2; }
+        if (view == View.CHAT) for (AiProviderType candidate : supportedProviders()) { int tabWidth = (currentFont == null ? tabLabel(candidate).length() * 6 : currentFont.width(tabLabel(candidate))) + 14; if (contains(mouseX, mouseY, tabX, y + 3, tabWidth, HEADER - 4)) { selectProvider(candidate); return true; } tabX += tabWidth + 2; }
         int composerHeight = COMPOSER_LINES * ((currentFont == null ? 9 : currentFont.lineHeight) + 1) + 12;
         int composerY = y + height - composerHeight - 12;
-        if (pendingProposal != null && contains(mouseX, mouseY, x + 10, composerY - 20, 48, 16)) { applyPendingProposal(); return true; }
-        if (pendingProposal != null && contains(mouseX, mouseY, x + 64, composerY - 20, 54, 16)) { discardPendingProposal(); return true; }
-        if (contains(mouseX, mouseY, x + 12, y + HEADER + 4, 54, 13)) { clearConversation(); return true; }
+        if (!chatScroll.atEnd() && contains(mouseX, mouseY, x + width - 68, chatBottomY() + 1, 58, 13)) { chatScroll.end(); return true; }
+        if (contains(mouseX, mouseY, x + 8, chatTopY(), width - 16, Math.max(0, chatBottomY() - chatTopY()))) {
+            var rows = thinkingLines(currentFont);
+            updateChatScroll(rows);
+            var metrics = chatScrollMetrics();
+            if (chatScroll.maxPixels() > 0 && contains(mouseX, mouseY, metrics.trackLeft() - 3, metrics.trackTop(), metrics.trackWidth() + 6, metrics.viewportHeight())) {
+                scrollbarDragging = true;
+                int thumbTop = metrics.thumbTop(), thumbHeight = metrics.thumbHeight();
+                scrollbarGrab = mouseY >= thumbTop && mouseY < thumbTop + thumbHeight ? mouseY - thumbTop : thumbHeight / 2;
+                dragScrollbar(mouseY); return true;
+            }
+            int rowIndex = (chatScroll.offsetPixels() + mouseY - chatTopY()) / chatRowHeight();
+            if (rowIndex < rows.size() && rows.get(rowIndex).kind() == AiChatLayout.Kind.DETAILS) {
+                int group = rows.get(rowIndex).entry();
+                if (!expandedDetails.add(group)) expandedDetails.remove(group);
+                cachedThinkingRevision = -1;
+            }
+            return true;
+        }
+        if (view == View.CHAT && pendingProposal != null && contains(mouseX, mouseY, x + 10, composerY - 20, 48, 16)) { applyPendingProposal(); return true; }
+        if (view == View.CHAT && pendingProposal != null && contains(mouseX, mouseY, x + 64, composerY - 20, 54, 16)) { discardPendingProposal(); return true; }
         if (contains(mouseX, mouseY, x + 10, composerY, width - 20, composerHeight)) {
             if (contains(mouseX, mouseY, actionButtonX(), actionButtonY(composerY, composerHeight), ACTION_BUTTON_SIZE, ACTION_BUTTON_SIZE)) {
-                if (!requesting) activateAction();
+                if (requesting) cancelRequest(); else activateAction();
             } else {
                 activeField = Field.PROMPT;
                 replaceOnType = false;
@@ -215,9 +288,10 @@ final class PathmindAiPopupController {
         dragging = true; dragOffsetX = mouseX - x; dragOffsetY = mouseY - y; return true;
     }
     private boolean settingsClick(int mouseX, int mouseY) {
+        if (contains(mouseX, mouseY, x + 12, y + height - 54, width - 24, 18)) { openMemory(); return true; }
         if (contains(mouseX, mouseY, x + 7, y + 2, 48, 18)) { view = View.CHAT; modelDropdownOpen = false; return true; }
         int tabX = x + 12;
-        for (AiProviderType candidate : supportedProviders()) { int tabWidth = tabLabel(candidate).length() * 6 + 12; if (contains(mouseX, mouseY, tabX, y + HEADER + 8, tabWidth, 16)) { selectProvider(candidate); return true; } tabX += tabWidth + 2; }
+        for (AiProviderType candidate : supportedProviders()) { int tabWidth = (currentFont == null ? tabLabel(candidate).length() * 6 : currentFont.width(tabLabel(candidate))) + 12; if (contains(mouseX, mouseY, tabX, y + HEADER + 8, tabWidth, HEADER - 4)) { selectProvider(candidate); return true; } tabX += tabWidth + 2; }
         int keyY = y + HEADER + 54;
         if (contains(mouseX, mouseY, x + 12, keyY, width - 24, 20)) { activeField = Field.KEY; replaceOnType = false; return true; }
         int modelY = y + HEADER + 42 + 48;
@@ -234,12 +308,13 @@ final class PathmindAiPopupController {
     }
     boolean mouseDragged(int mouseX, int mouseY, int screenWidth, int screenHeight) {
         if (!visible) return false;
+        if (scrollbarDragging) { dragScrollbar(mouseY); return true; }
         if (resizing) { updateResize(mouseX, mouseY, screenWidth, screenHeight); return true; }
         if (dragging) { x = mouseX - dragOffsetX; y = mouseY - dragOffsetY; clampToScreen(screenWidth, screenHeight); return true; }
         if (promptSelecting) { promptCursor = promptIndexAt(mouseX, mouseY, y + height - (COMPOSER_LINES * ((currentFont == null ? 9 : currentFont.lineHeight) + 1) + 12) - 12); return true; }
         return false;
     }
-    boolean mouseReleased() { boolean handled = dragging || resizing || promptSelecting; dragging = false; resizing = false; resizeCorner = null; promptSelecting = false; return handled; }
+    boolean mouseReleased() { boolean handled = dragging || resizing || promptSelecting || scrollbarDragging; dragging = false; resizing = false; scrollbarDragging = false; resizeCorner = null; promptSelecting = false; return handled; }
     boolean keyPressed(int keyCode, int modifiers) {
         if (!visible) return false;
         if (modelDropdownOpen) { modelDropdownOpen = false; return true; }
@@ -269,87 +344,195 @@ final class PathmindAiPopupController {
     boolean charTyped(char character) { if (!visible || activeField == Field.NONE || Character.isISOControl(character)) return visible; type(character); return true; }
 
     private void activateAction() {
+        if (view == View.MEMORY) {
+            try { conversationHistory.savePreferences(prompt); leaveMemory(); status = "Preferences saved."; }
+            catch (IllegalStateException failure) { reportError(failure.getMessage()); }
+            return;
+        }
         if (requesting) return;
         if (prompt.isBlank()) { reportError("Describe the preset first."); return; }
         if (pendingProposal != null) { reportError("Apply or discard the pending proposal first."); return; }
         if (AiProviderRegistry.configured(provider).isEmpty()) { view = View.SETTINGS; reportError("Configure " + provider.displayName() + " first."); return; }
-        requesting = true; status = ""; thinkingScrollOffset = 0; requestStartedAt = System.currentTimeMillis();
+        requesting = true; status = ""; chatScroll.end(); progressLabel = "Understanding your request"; requestStartedAt = System.currentTimeMillis();
         String submittedPrompt = prompt;
         int requestGeneration = conversationGeneration;
-        history(provider).add(new ChatLine("You: " + submittedPrompt, UITheme.TEXT_SECONDARY));
+        long requestHistoryGeneration = conversationHistory.generation(provider);
+        var requestStamp = com.pathmind.ai.AiRequestStamp.capture(provider, requestGeneration, conversationHistory);
+        String priorContext = conversationContext();
+        appendHistory(provider, Role.USER, submittedPrompt);
         prompt = ""; promptCursor = 0; promptAnchor = 0; promptScrollLine = 0;
         AiProviderType requestProvider = provider;
-        host.requestAiProposal(provider, submittedPrompt, conversationContext(), value -> {
-            if (requestGeneration != conversationGeneration) return;
+        requestControl = new AiRequestControl(progress -> Minecraft.getInstance().execute(() -> {
+            if (!requestStamp.isCurrent(provider, conversationGeneration, conversationHistory) || !requesting) return;
+            progressLabel = progress.message();
+            if (progress.completedTool() != null && !progress.completedTool().tool().equals("finish")) {
+                var step = progress.completedTool();
+                appendHistory(requestProvider, Role.DETAIL, (step.success() ? "✓ " : "! ") + step.tool() + ": " + step.message());
+            }
+        }));
+        host.requestAiProposal(provider, submittedPrompt, priorContext, requestControl, value -> {
+            if (!requestStamp.isCurrent(provider, conversationGeneration, conversationHistory)) return;
             requesting = false;
-            if (value.workLog() != null) for (String line : value.workLog()) if (line != null && !line.isBlank()) history(requestProvider).add(new ChatLine("· " + line, UITheme.TEXT_TERTIARY));
+            try { conversationHistory.saveSummary(requestProvider, requestControl == null ? null : requestControl.summary()); }
+            catch (IllegalStateException failure) { appendHistory(requestProvider, Role.ERROR, failure.getMessage()); }
+            requestControl = null;
             if (value.changesGraph()) {
+                recordChange(requestProvider, "PROPOSED", value.title(), AiPresetService.graphFingerprint(value.title(), value.graph()));
                 pendingProposal = value;
+                pendingHistoryGeneration = requestHistoryGeneration;
                 status = value.editsCurrentPreset() ? "Review the proposed update." : "Review the proposed preset.";
+                appendHistory(requestProvider, Role.EVENT, "Proposal prepared for review; it has NOT been applied. Target: " + value.target());
                 if (value.review() != null) for (String line : value.review().displayLines()) {
-                    history(requestProvider).add(new ChatLine(line, line.endsWith(":") ? UITheme.TEXT_PRIMARY : UITheme.TEXT_SECONDARY));
+                    appendHistory(requestProvider, Role.DETAIL, line);
                 }
+            } else {
+                status = switch (value.outcome()) {
+                    case CLARIFICATION -> "Waiting for your clarification.";
+                    case BLOCKED -> "Unable to prepare the requested change.";
+                    default -> "Answered. No preset changes applied.";
+                };
+                if (value.outcome() == com.pathmind.ai.AiCompletionOutcome.CLARIFICATION || value.outcome() == com.pathmind.ai.AiCompletionOutcome.BLOCKED)
+                    appendHistory(requestProvider, Role.EVENT, "Request outcome: " + value.outcome() + ". No preset changes applied.");
             }
             String response = value.response() == null || value.response().isBlank() ? (value.editsCurrentPreset() ? "I prepared an update for review." : value.changesGraph() ? "I prepared a new preset for review." : "I reviewed the current preset.") : value.response();
-            history(requestProvider).add(new ChatLine("AI: " + response, UITheme.TEXT_PRIMARY));
-        }, error -> { if (requestGeneration != conversationGeneration) return; requesting = false; reportError(error); });
+            appendHistory(requestProvider, Role.ASSISTANT, response);
+        }, error -> { if (!requestStamp.isCurrent(provider, conversationGeneration, conversationHistory)) return; requesting = false; requestControl = null; appendHistory(requestProvider, Role.ERROR, error); reportError(error); });
     }
     private void applyPendingProposal() {
         if (pendingProposal == null) return;
+        if (pendingHistoryGeneration != conversationHistory.generation(provider)) { pendingProposal = null; reportError("This proposal belongs to a reset conversation. Send a new request."); return; }
         String result = host.applyAiProposal(pendingProposal);
         if (result.startsWith("Error")) { reportError(result); return; }
-        history().add(new ChatLine("· " + result, UITheme.TEXT_SECONDARY));
+        appendHistory(provider, Role.EVENT, "Proposal applied: " + result);
+        try { conversationHistory.recordChange(provider, "APPLIED", host.activePresetName(), AiPresetService.graphFingerprint(host.activePresetName(), host.activeGraph()),
+            pendingProposal.review() == null ? "" : String.join("; ", pendingProposal.review().changes())); }
+        catch (IllegalStateException failure) { host.showAiError(failure.getMessage()); }
         pendingProposal = null;
         status = result;
     }
     private void discardPendingProposal() {
         if (pendingProposal == null) return;
+        recordChange(provider, "DISCARDED", pendingProposal.title(), AiPresetService.graphFingerprint(pendingProposal.title(), pendingProposal.graph()));
         pendingProposal = null;
         status = "Proposal discarded.";
-        history().add(new ChatLine("· Proposal discarded.", UITheme.TEXT_SECONDARY));
+        appendHistory(provider, Role.EVENT, "Proposal discarded; it was NOT applied.");
     }
-    private void clearConversation() { conversationGeneration++; history().clear(); pendingProposal = null; prompt = ""; promptCursor = promptAnchor = promptScrollLine = 0; status = ""; requestStartedAt = 0; requesting = false; activeField = Field.NONE; }
+    private void clearConversation() {
+        try { conversationHistory.reset(provider); }
+        catch (IllegalStateException failure) { reportError(failure.getMessage()); resetArmed = false; return; }
+        stopWork(false);
+        conversationGeneration++; pendingProposal = null; prompt = ""; promptCursor = promptAnchor = promptScrollLine = 0;
+        status = ""; requestStartedAt = 0; requesting = false; activeField = Field.NONE; chatScroll.reset(); expandedDetails.clear(); resetArmed = false;
+    }
     private java.util.List<ChatLine> history() { return history(provider); }
-    private java.util.List<ChatLine> history(AiProviderType type) { return conversationHistory.computeIfAbsent(type, unused -> new java.util.ArrayList<>()); }
-    private String conversationContext() { StringBuilder out = new StringBuilder(); for (ChatLine line : history()) out.append(line.text()).append('\n'); return out.toString(); }
+    private java.util.List<ChatLine> history(AiProviderType type) {
+        long revision = conversationHistory.revision(type);
+        if (cachedHistoryProvider == type && cachedHistoryRevision == revision) return cachedHistory;
+        cachedHistoryProvider = type; cachedHistoryRevision = revision;
+        cachedHistory = conversationHistory.history(type).stream().map(entry -> new ChatLine(
+            switch (entry.role()) { case USER -> "You: "; case ASSISTANT -> "AI: "; case ERROR -> "Error: "; default -> "· "; } + entry.text(),
+            switch (entry.role()) { case USER, EVENT -> UITheme.TEXT_SECONDARY; case ASSISTANT -> UITheme.TEXT_PRIMARY; case ERROR -> UITheme.STATE_ERROR; case DETAIL -> UITheme.TEXT_TERTIARY; }
+        )).toList();
+        return cachedHistory;
+    }
+    private void appendHistory(AiProviderType type, Role role, String text) {
+        try { conversationHistory.append(type, role, text); }
+        catch (IllegalStateException failure) { host.showAiError(failure.getMessage()); }
+    }
+    private String conversationContext() { return conversationHistory.context(provider); }
+    private void recordChange(AiProviderType type, String state, String preset, String fingerprint) {
+        try { conversationHistory.recordChange(type, state, preset, fingerprint); }
+        catch (IllegalStateException failure) { host.showAiError(failure.getMessage()); }
+    }
+    private void openMemory() {
+        if (requesting) { reportError("Stop the request before changing context."); return; }
+        savedDraft = prompt; prompt = conversationHistory.preferences(); promptCursor = prompt.length(); promptAnchor = promptCursor; promptScrollLine = 0;
+        view = View.MEMORY; chatScroll.reset(); cachedThinkingRevision = -1; activeField = Field.PROMPT;
+        updateChatScroll(thinkingLines(currentFont)); chatScroll.seek(0);
+    }
+    private void leaveMemory() {
+        prompt = savedDraft; savedDraft = ""; promptCursor = prompt.length(); promptAnchor = promptCursor; promptScrollLine = 0;
+        view = View.CHAT; chatScroll.reset(); cachedThinkingRevision = -1; activeField = Field.NONE;
+    }
     private void saveConfiguration() {
         if (apiKey.isBlank() && !com.pathmind.ai.AiSecretStore.hasSecret(provider)) { status = "Error: enter an API key."; return; }
         AiProviderRegistry.saveConfiguration(provider, true, model, provider.defaultEndpoint(), apiKey.isBlank() ? null : apiKey);
         apiKey = ""; status = "Saved."; view = View.CHAT;
     }
     private void reportError(String message) { status = "Error: " + (message == null || message.isBlank() ? "AI request failed." : message); host.showAiError(status); }
+    private void cancelRequest() { stopWork(true); }
+    private void stopWork(boolean record) {
+        if (!requesting || requestControl == null) return;
+        AiRequestControl cancelledControl = requestControl;
+        conversationGeneration++; requesting = false; requestControl = null; pendingProposal = null;
+        progressLabel = "Cancelled"; status = "Request cancelled. No preset changes applied.";
+        cancelledControl.cancel();
+        if (record) appendHistory(provider, Role.EVENT, status);
+    }
+    void dispose() { stopWork(true); close(); }
+    private int chatRowHeight() { return (currentFont == null ? 9 : currentFont.lineHeight) + 3; }
+    private int chatTopY() { return y + HEADER + 25; }
+    private int chatBottomY() {
+        int composerHeight = COMPOSER_LINES * ((currentFont == null ? 9 : currentFont.lineHeight) + 1) + 12;
+        return y + height - composerHeight - 12 - (view != View.CHAT || pendingProposal == null ? 24 : 40);
+    }
+    private void updateChatScroll(java.util.List<AiChatLayout.Row> rows) {
+        chatScroll.updatePixels(rows, Math.max(1, chatBottomY() - chatTopY()), chatRowHeight());
+    }
+    private ScrollbarHelper.Metrics chatScrollMetrics() {
+        return ScrollbarHelper.metrics(x + width - 12, chatTopY(), UITheme.SCROLLBAR_WIDTH,
+            Math.max(1, chatBottomY() - chatTopY()), chatScroll.maxPixels(), chatScroll.offsetPixels(), 20);
+    }
+    private void dragScrollbar(int mouseY) {
+        chatScroll.seekPixels(ScrollbarHelper.scrollFromThumb(chatScrollMetrics(), mouseY - scrollbarGrab));
+    }
     private void renderThinking(GuiGraphics c, Font f, int bottomY) {
-        java.util.List<ThinkingLine> rows = thinkingLines(f);
-        int topY = y + HEADER + 22;
+        java.util.List<AiChatLayout.Row> rows = thinkingLines(f);
+        int topY = chatTopY();
         int rowHeight = f.lineHeight + 3;
-        int visibleCount = Math.max(1, (bottomY - topY) / rowHeight);
-        int total = rows.size();
-        int maxScroll = Math.max(0, total - visibleCount);
-        thinkingScrollOffset = clamp(thinkingScrollOffset, 0, maxScroll);
-        int newest = total - 1 - thinkingScrollOffset;
-        int oldest = Math.max(0, newest - visibleCount + 1);
-        c.enableScissor(x + 8, topY, x + width - 8, bottomY);
-        for (int i = newest; i >= oldest; i--) {
-            int rowFromBottom = newest - i;
-            int lineY = bottomY - (rowFromBottom + 1) * rowHeight;
-            ThinkingLine row = rows.get(i);
-            c.drawString(f, Component.literal(row.text()), x + 16, lineY, row.color());
+        updateChatScroll(rows);
+        c.enableScissor(x + 8, topY, x + width - 18, bottomY);
+        int endRow = (chatScroll.offsetPixels() + bottomY - topY + rowHeight - 1) / rowHeight;
+        for (int i = chatScroll.top(); i < Math.min(rows.size(), endRow); i++) {
+            int lineY = topY + i * rowHeight - chatScroll.offsetPixels();
+            var row = rows.get(i);
+            int color = row.kind() == AiChatLayout.Kind.DETAILS ? framelessColor("details-" + row.entry(), x + 12, lineY, width - 32, rowHeight, UITheme.TEXT_HEADER)
+                : row.role() == Role.ERROR ? UITheme.STATE_ERROR : row.role() == Role.DETAIL ? UITheme.TEXT_TERTIARY
+                : row.role() == Role.ASSISTANT ? UITheme.TEXT_PRIMARY : UITheme.TEXT_SECONDARY;
+            c.drawString(f, Component.literal(row.text()), x + 12, lineY, color);
         }
         c.disableScissor();
-        DropdownLayoutHelper.drawScrollBar(c, x + 8, topY, width - 16, bottomY - topY, total, visibleCount, maxScroll - thinkingScrollOffset, maxScroll, UITheme.BACKGROUND_TERTIARY, UITheme.BORDER_HIGHLIGHT);
+        ScrollbarHelper.renderSettingsStyle(c, chatScrollMetrics(), UITheme.BACKGROUND_SIDEBAR, UITheme.BORDER_DEFAULT, UITheme.BORDER_DEFAULT);
     }
     private void renderActivity(GuiGraphics c, Font f, String label, String message, int bottomY, int color) { int topY = Math.max(y + HEADER + 58, bottomY - 3 * (f.lineHeight + 3)); c.drawString(f, Component.literal(label), x + 12, topY, color); drawWrapped(c, f, message, x + 16, topY + f.lineHeight + 3, width - 32, 2, color); }
-    private record ThinkingLine(String text, int color) { }
     private record ChatLine(String text, int color) { }
-    private java.util.List<ThinkingLine> thinkingLines(Font font) {
-        java.util.List<ThinkingLine> result = new java.util.ArrayList<>();
-        for (ChatLine chatLine : history()) for (TextLine line : lineSegments(font, chatLine.text(), Math.max(24, width - 38))) result.add(new ThinkingLine(line.text(), chatLine.color()));
-        if (requesting) result.add(new ThinkingLine("› Requesting " + provider.displayName() + "…", UITheme.TEXT_PRIMARY));
-        if (status.startsWith("Error")) for (TextLine line : lineSegments(font, status, Math.max(24, width - 38))) result.add(new ThinkingLine(line.text(), UITheme.STATE_ERROR));
-        return result;
+    private java.util.List<AiChatLayout.Row> thinkingLines(Font font) {
+        if (view == View.MEMORY) {
+            var summary = conversationHistory.summary(provider);
+            var entries = java.util.List.of(
+                new AiChatHistoryStore.Entry(Role.EVENT, "Conversation summary (AI-authored, advisory):\n\n" + (summary == null ? "No summary yet. It will be refreshed when requests finish." : summary.display()), 0),
+                new AiChatHistoryStore.Entry(Role.EVENT, "Explicit preferences:\nEdit the field below and press the arrow to save. Shift+Enter adds a line. Blank saves no preferences. Preferences are shared across providers and survive chat reset. Back leaves without saving.\n\nThe current preset and selection are refreshed for every request; old conversation is never the source of graph state.", 0));
+            cachedThinkingLines = AiChatLayout.layout(entries, Math.max(24, width - 32), font == null ? text -> text.length() * 6 : font::width, java.util.Set.of());
+            return cachedThinkingLines;
+        }
+        long revision = conversationHistory.revision(provider);
+        if (cachedThinkingFont == font && cachedThinkingProvider == provider && cachedThinkingWidth == width
+            && cachedThinkingRevision == revision && cachedThinkingRequesting == requesting && cachedThinkingStatus.equals(status)) return cachedThinkingLines;
+        var entries = new java.util.ArrayList<>(conversationHistory.history(provider));
+        if (status.startsWith("Error") && (entries.isEmpty() || entries.getLast().role() != Role.ERROR
+            || !(entries.getLast().text().equals(status) || status.equals("Error: " + entries.getLast().text()))))
+            entries.add(new AiChatHistoryStore.Entry(Role.ERROR, status, System.currentTimeMillis()));
+        cachedThinkingFont = font; cachedThinkingProvider = provider; cachedThinkingWidth = width;
+        cachedThinkingRevision = revision; cachedThinkingRequesting = requesting; cachedThinkingStatus = status;
+        cachedThinkingLines = AiChatLayout.layout(entries, Math.max(24, width - 32), font == null ? text -> text.length() * 6 : font::width, expandedDetails);
+        return cachedThinkingLines;
     }
-    boolean mouseScrolled(int mouseX, int mouseY, double amount) { if (!visible || requestStartedAt <= 0 || currentFont == null || amount == 0.0) return false; int composerHeight = COMPOSER_LINES * (currentFont.lineHeight + 1) + 12; int topY = y + HEADER + 18, bottomY = y + height - composerHeight - 22; if (!contains(mouseX, mouseY, x + 8, topY, width - 16, Math.max(0, bottomY - topY))) return false; int visibleCount = Math.max(1, (bottomY - topY) / (currentFont.lineHeight + 3)); thinkingScrollOffset = clamp(thinkingScrollOffset + (amount > 0 ? 1 : -1), 0, Math.max(0, thinkingLines(currentFont).size() - visibleCount)); return true; }
-    private void selectProvider(AiProviderType next) { if (next != provider) { conversationGeneration++; requesting = false; pendingProposal = null; requestStartedAt = 0; status = ""; prompt = ""; promptCursor = promptAnchor = promptScrollLine = 0; } provider = next; apiKey = ""; model = configuredModel(); modelDropdownOpen = false; activeField = Field.NONE; replaceOnType = false; }
+    boolean mouseScrolled(int mouseX, int mouseY, double amount) {
+        if (!visible || view == View.SETTINGS || currentFont == null || amount == 0 || !contains(mouseX, mouseY, x + 8, chatTopY(), width - 16, Math.max(0, chatBottomY() - chatTopY()))) return false;
+        updateChatScroll(thinkingLines(currentFont));
+        chatScroll.wheel(amount); return true;
+    }
+    private void selectProvider(AiProviderType next) { if (next != provider) { stopWork(true); conversationGeneration++; requesting = false; pendingProposal = null; requestStartedAt = 0; status = ""; prompt = ""; promptCursor = promptAnchor = promptScrollLine = 0; chatScroll.reset(); expandedDetails.clear(); resetArmed = false; } provider = next; apiKey = ""; model = configuredModel(); modelDropdownOpen = false; activeField = Field.NONE; replaceOnType = false; }
     private void type(char character) { if (replaceOnType) clearField(); replaceOnType = false; if (activeField == Field.KEY && apiKey.length() < 512) apiKey += character; else if (activeField == Field.PROMPT) insertPromptText(String.valueOf(character)); }
     private void backspace() { if (replaceOnType) { clearField(); return; } if (activeField == Field.KEY && !apiKey.isEmpty()) apiKey = apiKey.substring(0, apiKey.length() - 1); else if (activeField == Field.PROMPT) { if (promptAnchor != promptCursor) deletePromptSelection(); else if (promptCursor > 0) { prompt = prompt.substring(0, promptCursor - 1) + prompt.substring(promptCursor); promptCursor--; promptAnchor = promptCursor; } } }
     private void clearField() { if (activeField == Field.KEY) apiKey = ""; else if (activeField == Field.PROMPT) { prompt = ""; promptCursor = 0; promptScrollLine = 0; } replaceOnType = false; }
@@ -357,7 +540,8 @@ final class PathmindAiPopupController {
     private void renderModelDropdown(GuiGraphics c, Font f, int iy, int mouseX, int mouseY, int accent) {
         int ix = x + 12, iw = width - 24;
         boolean hovered = contains(mouseX, mouseY, ix, iy, iw, 20);
-        UIStyleHelper.drawToolbarButtonFrame(c, ix, iy, iw, 20, UITheme.BACKGROUND_SECONDARY, modelDropdownOpen || hovered ? accent : UITheme.BORDER_DEFAULT, UITheme.PANEL_INNER_BORDER);
+        var palette = UIStyleHelper.getDropdownFieldPalette(accent, hover("model-dropdown", hovered), modelDropdownOpen, false);
+        UIStyleHelper.drawBeveledPanel(c, ix, iy, iw, 20, palette.backgroundColor(), palette.borderColor(), palette.innerBorderColor());
         c.drawString(f, Component.literal(trim(model, Math.max(16, (iw - 30) / 6))), ix + 8, iy + 6, modelDropdownOpen ? accent : UITheme.TEXT_PRIMARY);
         PathmindPopupRenderer.drawDropdownChevron(c, ix + iw - 12, iy + 6, modelDropdownOpen ? accent : UITheme.TEXT_SECONDARY, modelDropdownOpen);
     }
@@ -393,7 +577,42 @@ final class PathmindAiPopupController {
     private void beginResize(ResizeCorner corner) { resizing = true; resizeCorner = corner; resizeStartX = x; resizeStartY = y; resizeStartWidth = width; resizeStartHeight = height; }
     private void updateResize(int mouseX, int mouseY, int screenWidth, int screenHeight) { int left = resizeStartX, top = resizeStartY, right = resizeStartX + resizeStartWidth, bottom = resizeStartY + resizeStartHeight; switch (resizeCorner) { case TOP_LEFT -> { left = Math.min(mouseX, right - MIN_WIDTH); top = Math.min(mouseY, bottom - MIN_HEIGHT); } case TOP_RIGHT -> { right = Math.max(mouseX, left + MIN_WIDTH); top = Math.min(mouseY, bottom - MIN_HEIGHT); } case BOTTOM_LEFT -> { left = Math.min(mouseX, right - MIN_WIDTH); bottom = Math.max(mouseY, top + MIN_HEIGHT); } case BOTTOM_RIGHT -> { right = Math.max(mouseX, left + MIN_WIDTH); bottom = Math.max(mouseY, top + MIN_HEIGHT); } } x = clamp(left, 0, screenWidth - MIN_WIDTH); y = clamp(top, 0, screenHeight - MIN_HEIGHT); width = Math.min(right - x, screenWidth - x); height = Math.min(bottom - y, screenHeight - y); }
     private void renderCornerHandles(GuiGraphics c) { int color = UITheme.BORDER_HIGHLIGHT; int size = 3; c.fill(x - 1, y - 1, x + size, y + size, color); c.fill(x + width - size, y - 1, x + width + 1, y + size, color); c.fill(x - 1, y + height - size, x + size, y + height + 1, color); c.fill(x + width - size, y + height - size, x + width + 1, y + height + 1, color); }
-    private void drawTab(GuiGraphics c, Font f, String label, int tx, int ty, int tw, boolean selected, int mouseX, int mouseY, int accent) { boolean hovered = contains(mouseX, mouseY, tx, ty, tw, HEADER - 4); int fill = selected ? UITheme.BUTTON_ACTIVE_BG : hovered ? UITheme.BUTTON_DEFAULT_HOVER : UITheme.BUTTON_DEFAULT_BG; int border = selected ? accent : hovered ? UITheme.BORDER_HIGHLIGHT : UITheme.BORDER_DEFAULT; c.fill(tx, ty, tx + tw, ty + HEADER - 4, fill); DrawBorder(c, tx, ty, tw, HEADER - 4, border); c.drawString(f, Component.literal(label), tx + 6, ty + 5, selected ? UITheme.TEXT_PRIMARY : UITheme.TEXT_SECONDARY); }
+    private void drawTab(GuiGraphics c, Font f, String label, int tx, int ty, int tw, boolean selected, int mouseX, int mouseY, int accent) {
+        textButton(c, f, view + "-provider-" + label, label, tx, ty, tw, HEADER - 4,
+            selected ? UIStyleHelper.TextButtonStyle.ACCENT : UIStyleHelper.TextButtonStyle.DEFAULT, accent, null);
+    }
+    private float hover(String key, boolean hovered) {
+        renderedButtonKeys.add(key);
+        return HoverAnimator.getProgress(buttonHoverKeys.computeIfAbsent(key, ignored -> new Object()), hovered);
+    }
+    private int framelessColor(String key, int bx, int by, int bw, int bh, int hoverColor) {
+        float progress = hover(key, contains(renderMouseX, renderMouseY, bx, by, bw, bh));
+        return AnimationHelper.lerpColor(UITheme.TEXT_SECONDARY, hoverColor, AnimationHelper.easeOutQuad(progress));
+    }
+    private void renderClose(GuiGraphics c, Font f) {
+        int color = framelessColor("close", x + width - 18, y + 2, 16, 18, UITheme.STATE_ERROR);
+        c.drawCenteredString(f, Component.literal("×"), x + width - 10, y + 2 + (18 - f.lineHeight) / 2 + 1, color);
+    }
+    private UIStyleHelper.TextButtonPalette buttonFrame(GuiGraphics c, String key, int bx, int by, int bw, int bh,
+                                                       UIStyleHelper.TextButtonStyle style, int accent, String tooltip) {
+        boolean hovered = contains(renderMouseX, renderMouseY, bx, by, bw, bh);
+        var palette = UIStyleHelper.getTextButtonPalette(style, accent, hover(key, hovered), false);
+        UIStyleHelper.drawTextButtonFrame(c, bx, by, bw, bh, palette);
+        if (hovered && tooltip != null) hoveredTooltip = tooltip;
+        return palette;
+    }
+    private void textButton(GuiGraphics c, Font f, String key, String label, int bx, int by, int bw, int bh,
+                            UIStyleHelper.TextButtonStyle style, int accent, String tooltip) {
+        var palette = buttonFrame(c, key, bx, by, bw, bh, style, accent, tooltip);
+        c.drawCenteredString(f, Component.literal(label), bx + bw / 2, by + (bh - f.lineHeight) / 2 + 1, palette.textColor());
+    }
+    private int iconButton(GuiGraphics c, String key, int bx, int by, int bw, int bh, int accent, boolean active, String tooltip) {
+        boolean hovered = contains(renderMouseX, renderMouseY, bx, by, bw, bh);
+        float progress = hover(key, hovered);
+        UIStyleHelper.drawToolbarButtonFrame(c, bx, by, bw, bh, UIStyleHelper.getToolbarButtonPalette(accent, progress, active, false));
+        if (hovered && tooltip != null) hoveredTooltip = tooltip;
+        return AnimationHelper.lerpColor(UITheme.TEXT_SECONDARY, UITheme.TEXT_HEADER, AnimationHelper.easeOutQuad(progress));
+    }
     private static AiProviderType[] supportedProviders() { return new AiProviderType[]{AiProviderType.OPENAI, AiProviderType.ANTHROPIC, AiProviderType.GEMINI}; }
     private static String tabLabel(AiProviderType provider) { return switch (provider) { case OPENAI -> "GPT"; case ANTHROPIC -> "Claude"; case GEMINI -> "Gemini"; default -> provider.displayName(); }; }
     private static void DrawBorder(GuiGraphics c, int bx, int by, int bw, int bh, int color) { c.hLine(bx, bx + bw - 1, by, color); c.hLine(bx, bx + bw - 1, by + bh - 1, color); c.vLine(bx, by, by + bh - 1, color); c.vLine(bx + bw - 1, by, by + bh - 1, color); }

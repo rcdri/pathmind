@@ -77,6 +77,8 @@ public final class SettingsManager {
             public Boolean enabled = false;
             public String model = "";
             public String endpoint = "";
+            /** Explicit opt-in to OpenAI response storage/chaining. Local native history is the default. */
+            public Boolean storeConversation = false;
 
             public AiProviderSettings() {
             }

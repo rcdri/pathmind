@@ -27,8 +27,8 @@ public final class OpenAiCompatibleProvider implements AiProvider {
         this.capabilities = capabilities == null ? AiProviderCapabilities.TEXT_ONLY : capabilities;
     }
 
-    public static OpenAiCompatibleProvider officialOpenAi(String endpoint, String apiKey) {
-        return new OpenAiCompatibleProvider(endpoint, apiKey, AiProviderCapabilities.STRUCTURED_OUTPUT);
+    public static OpenAiResponsesProvider officialOpenAi(String endpoint, String apiKey) {
+        return new OpenAiResponsesProvider(endpoint, apiKey);
     }
 
     @Override
@@ -38,6 +38,16 @@ public final class OpenAiCompatibleProvider implements AiProvider {
 
     @Override
     public CompletableFuture<String> generate(AiPresetRequest request) {
+        return generateMeasured(request).thenApply(AiModelTurn::action);
+    }
+
+    @Override
+    public String providerId() { return "openai_compatible"; }
+
+    @Override
+    public AiProviderSession openSession() { return (request, previousToolResult) -> generateMeasured(request); }
+
+    private CompletableFuture<AiModelTurn> generateMeasured(AiPresetRequest request) {
         JsonObject body = requestBody(request, capabilities);
         HttpRequest httpRequest = HttpRequest.newBuilder(URI.create(endpoint))
             .timeout(Duration.ofSeconds(75))
@@ -50,8 +60,12 @@ public final class OpenAiCompatibleProvider implements AiProvider {
                 throw new IllegalStateException("AI provider returned HTTP " + response.statusCode());
             }
             JsonObject json = JsonParser.parseString(response.body()).getAsJsonObject();
-            return json.getAsJsonArray("choices").get(0).getAsJsonObject()
+            String content = json.getAsJsonArray("choices").get(0).getAsJsonObject()
                 .getAsJsonObject("message").get("content").getAsString();
+            JsonObject usage = json.getAsJsonObject("usage");
+            JsonObject details = usage == null ? null : usage.getAsJsonObject("prompt_tokens_details");
+            return new AiModelTurn(content, new AiTokenUsage(AiTokenUsage.number(usage, "prompt_tokens"),
+                AiTokenUsage.number(usage, "completion_tokens"), AiTokenUsage.number(details, "cached_tokens"), 0L));
         });
     }
 

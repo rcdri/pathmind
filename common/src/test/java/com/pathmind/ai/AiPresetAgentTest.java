@@ -1,8 +1,8 @@
 package com.pathmind.ai;
 
-import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.pathmind.data.NodeGraphData;
 import com.pathmind.nodes.NodeType;
 import java.util.ArrayDeque;
@@ -20,11 +20,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AiPresetAgentTest {
     @Test
     void actionSchemaRequiresANonNullTarget() {
-        JsonObject target = AiAgentTurnSchema.create()
-            .getAsJsonObject("properties").getAsJsonObject("target");
+        JsonObject properties = AiAgentTurnSchema.create().getAsJsonObject("properties");
+        JsonObject target = properties.getAsJsonObject("target");
 
         assertEquals("string", target.get("type").getAsString());
         assertNotNull(target.getAsJsonArray("enum"));
+        assertTrue(properties.has("commands"));
+        assertTrue(properties.has("planSteps"));
+        assertTrue(properties.has("exampleTraits"));
+        assertFalse(properties.has("operations"));
     }
 
     @Test
@@ -40,20 +44,18 @@ class AiPresetAgentTest {
 
         assertFalse(proposal.changesGraph());
         assertEquals(3, provider.requests.size());
+        assertTrue(provider.requests.getFirst().systemPrompt().contains("Default to 1-3 short sentences"));
+        assertTrue(provider.requests.getFirst().systemPrompt().contains("not graph commands"));
         assertTrue(provider.requests.get(2).userPrompt().contains("activePreset"));
     }
 
     @Test
     void graphProposalMustValidateAndPreviewBeforeFinish() {
-        NodeGraphData graph = simpleGraph();
-        JsonArray operations = new JsonArray();
-        for (NodeGraphData.NodeData node : graph.getNodes()) {
-            operations.add(operation("add", "/nodes/-", new Gson().toJson(node)));
-        }
-        operations.add(operation("add", "/connections/-", new Gson().toJson(graph.getConnections().get(0))));
+        JsonArray commands = simpleGraphCommands();
         FakeProvider provider = new FakeProvider(
             action("select_target", "new", null, List.of()),
-            action("apply_graph_patch", null, operations, List.of()),
+            planAction("new", "Build a valid jump sequence", "START", "JUMP"),
+            action("apply_graph_commands", null, commands, List.of()),
             action("finish", null, null, List.of()),
             action("validate_graph", null, null, List.of()),
             action("preview_execution", null, null, List.of()),
@@ -66,8 +68,57 @@ class AiPresetAgentTest {
         assertTrue(proposal.changesGraph());
         assertEquals("new", proposal.target());
         assertEquals(2, proposal.graph().getNodes().size());
-        assertEquals(6, provider.requests.size());
-        assertTrue(provider.requests.get(3).userPrompt().contains("must pass validate_graph"));
+        assertEquals(7, provider.requests.size());
+        assertTrue(provider.requests.get(4).userPrompt().contains("must pass validate_graph"));
+    }
+
+    @Test
+    void editingIsRejectedUntilAStructuralPlanExists() {
+        FakeProvider provider = new FakeProvider(
+            action("select_target", "new", null, List.of()),
+            action("apply_graph_commands", "new", simpleGraphCommands(), List.of(), 0),
+            planAction("new", "Build a valid jump sequence", "START", "JUMP"),
+            action("apply_graph_commands", "new", simpleGraphCommands(), List.of(), 0),
+            action("validate_graph", "new", null, List.of(), 1),
+            action("finish", "new", null, List.of(), 1)
+        );
+
+        AiPresetService.Proposal proposal = AiPresetAgent.run(provider, "model", "Make a jump preset", "",
+            simpleGraph(), "Open", true, true).join();
+
+        assertEquals(2, proposal.graph().getNodes().size());
+        assertTrue(provider.requests.get(2).userPrompt().contains("Call plan_graph"));
+    }
+
+    @Test
+    void failedValidationReturnsRepairOrientedRelationships() {
+        JsonArray invalid = new JsonArray();
+        invalid.add(addNode("start", "START"));
+        invalid.add(addNode("repeat", "CONTROL_REPEAT"));
+        invalid.add(connect("start", "repeat", 0, 0));
+        JsonArray repair = new JsonArray();
+        repair.add(addNode("jump", "JUMP"));
+        JsonObject attach = emptyCommand("attach_action");
+        attach.addProperty("host", "repeat");
+        attach.addProperty("child", "jump");
+        repair.add(attach);
+        FakeProvider provider = new FakeProvider(
+            planAction("new", "Repeat a jump", "START", "CONTROL_REPEAT", "JUMP"),
+            action("apply_graph_commands", "new", invalid, List.of(), 0),
+            action("validate_graph", "new", null, List.of(), 1),
+            action("apply_graph_commands", "new", repair, List.of(), 1),
+            action("validate_graph", "new", null, List.of(), 2),
+            action("finish", "new", null, List.of(), 2)
+        );
+
+        AiPresetService.Proposal proposal = AiPresetAgent.run(provider, "model", "Jump repeatedly", "",
+            simpleGraph(), "Open", true, true).join();
+
+        String repairContext = provider.requests.get(3).userPrompt();
+        assertTrue(repairContext.contains("missing_action_attachment"));
+        assertTrue(repairContext.contains("suggestedOperations"));
+        assertTrue(repairContext.contains("attach_action"));
+        assertEquals(3, proposal.graph().getNodes().size());
     }
 
     @Test
@@ -98,19 +149,19 @@ class AiPresetAgentTest {
 
     @Test
     void staleDraftRevisionIsRejectedAndReturnedToTheModel() {
-        NodeGraphData graph = simpleGraph();
         JsonArray start = new JsonArray();
-        start.add(operation("add", "/nodes/-", new Gson().toJson(graph.getNodes().get(0))));
+        start.add(addNode("start", "START"));
         JsonArray jump = new JsonArray();
-        jump.add(operation("add", "/nodes/-", new Gson().toJson(graph.getNodes().get(1))));
+        jump.add(addNode("jump", "JUMP"));
         JsonArray connection = new JsonArray();
-        connection.add(operation("add", "/connections/-", new Gson().toJson(graph.getConnections().get(0))));
+        connection.add(connect("start", "jump", 0, 0));
         FakeProvider provider = new FakeProvider(
             action("select_target", "new", null, List.of(), 0),
-            action("apply_graph_patch", null, start, List.of(), 0),
-            action("apply_graph_patch", null, jump, List.of(), 0),
-            action("apply_graph_patch", null, jump, List.of(), 1),
-            action("apply_graph_patch", null, connection, List.of(), 2),
+            planAction("new", "Build a valid jump sequence", "START", "JUMP"),
+            action("apply_graph_commands", null, start, List.of(), 0),
+            action("apply_graph_commands", null, jump, List.of(), 0),
+            action("apply_graph_commands", null, jump, List.of(), 1),
+            action("apply_graph_commands", null, connection, List.of(), 2),
             action("validate_graph", null, null, List.of(), 3),
             action("preview_execution", null, null, List.of(), 3),
             action("finish", null, null, List.of(), 3)
@@ -120,8 +171,8 @@ class AiPresetAgentTest {
             simpleGraph(), "Open", true, true).join();
 
         assertEquals(2, proposal.graph().getNodes().size());
-        assertTrue(provider.requests.get(3).userPrompt().contains("Draft revision mismatch"));
-        assertTrue(provider.requests.get(3).userPrompt().contains("\"draftRevision\":1"));
+        assertTrue(provider.requests.get(4).userPrompt().contains("Draft revision mismatch"));
+        assertTrue(provider.requests.get(4).userPrompt().contains("\"draftRevision\":1"));
     }
 
     @Test
@@ -142,14 +193,45 @@ class AiPresetAgentTest {
     }
 
     @Test
-    void simpleCreationCanCompleteInFourProviderCalls() {
-        NodeGraphData graph = simpleGraph();
-        JsonArray operations = new JsonArray();
-        graph.getNodes().forEach(node -> operations.add(operation("add", "/nodes/-", new Gson().toJson(node))));
-        operations.add(operation("add", "/connections/-", new Gson().toJson(graph.getConnections().get(0))));
+    void exampleLookupUsesStructuralTraitsWithoutReturningUnrelatedGraphs() {
+        FakeProvider provider = new FakeProvider(
+            action("select_target", "inspect", null, List.of()),
+            exampleAction("REPEAT_UNTIL"),
+            action("inspect_preset", null, null, List.of()),
+            action("finish", null, null, List.of())
+        );
+
+        AiPresetAgent.run(provider, "model", "Show the repeat-until pattern", "",
+            simpleGraph(), "Open", true, true).join();
+
+        String transcript = provider.requests.get(2).userPrompt();
+        assertTrue(transcript.contains("repeat-until"));
+        assertFalse(transcript.contains("onboarding-1"));
+        assertFalse(transcript.contains("\"graph\""));
+    }
+
+    @Test
+    void compactQueriesFindAndInspectExistingNodes() {
+        FakeProvider provider = new FakeProvider(
+            action("select_target", "inspect", null, List.of()),
+            queryAction("find_nodes", "JUMP", null, 1),
+            queryAction("inspect_subgraph", null, "jump", 1),
+            action("finish", null, null, List.of())
+        );
+
+        AiPresetAgent.run(provider, "model", "Inspect the jump", "", simpleGraph(), "Open", true, true).join();
+
+        assertTrue(provider.requests.get(2).userPrompt().contains("Found 1 matching node"));
+        assertTrue(provider.requests.get(3).userPrompt().contains("compact 2-node neighborhood"));
+        assertFalse(provider.requests.get(3).userPrompt().contains("customNodeDefinition"));
+    }
+
+    @Test
+    void simpleCreationCanCompleteInFiveProviderCallsWithPlanning() {
         FakeProvider provider = new FakeProvider(
             describeActionForTarget("new", "START", "JUMP"),
-            action("apply_graph_patch", "new", operations, List.of(), 0),
+            planAction("new", "Build a valid jump sequence", "START", "JUMP"),
+            action("apply_graph_commands", "new", simpleGraphCommands(), List.of(), 0),
             action("validate_graph", "new", null, List.of(), 1),
             action("finish", "new", null, List.of("Validated and previewed."), 1)
         );
@@ -157,22 +239,19 @@ class AiPresetAgentTest {
         AiPresetService.Proposal proposal = AiPresetAgent.run(provider, "model", "Make a jump preset", "",
             simpleGraph(), "Open", true, true).join();
 
-        assertEquals(4, provider.requests.size());
+        assertEquals(5, provider.requests.size());
         assertTrue(proposal.review() != null && !proposal.review().executionPaths().isEmpty());
     }
 
     @Test
     void distinctRecoverableErrorsDoNotExhaustTheStagnationGuard() {
-        NodeGraphData graph = simpleGraph();
-        JsonArray operations = new JsonArray();
-        graph.getNodes().forEach(node -> operations.add(operation("add", "/nodes/-", new Gson().toJson(node))));
-        operations.add(operation("add", "/connections/-", new Gson().toJson(graph.getConnections().get(0))));
         FakeProvider provider = new FakeProvider(
             action("select_target", "new", null, List.of(), 0),
             action("not_a_tool", "new", null, List.of(), 0),
-            action("apply_graph_patch", "new", operations, List.of(), 1),
+            planAction("new", "Build a valid complex graph", "START", "JUMP"),
+            action("apply_graph_commands", "new", simpleGraphCommands(), List.of(), 1),
             action("validate_graph", "new", null, List.of(), 0),
-            action("apply_graph_patch", "new", operations, List.of(), 0),
+            action("apply_graph_commands", "new", simpleGraphCommands(), List.of(), 0),
             action("validate_graph", "new", null, List.of(), 1),
             action("finish", "new", null, List.of(), 1)
         );
@@ -180,36 +259,37 @@ class AiPresetAgentTest {
         AiPresetService.Proposal proposal = AiPresetAgent.run(provider, "model", "Make a complex preset", "",
             simpleGraph(), "Open", true, true).join();
 
-        assertEquals(7, provider.requests.size());
+        assertEquals(8, provider.requests.size());
         assertEquals(2, proposal.graph().getNodes().size());
     }
 
-    private static String action(String tool, String target, JsonArray operations, List<String> workLog) {
-        return action(tool, target, operations, workLog, 0);
+    private static String action(String tool, String target, JsonArray commands, List<String> workLog) {
+        return action(tool, target, commands, workLog, 0);
     }
 
-    private static String action(String tool, String target, JsonArray operations, List<String> workLog, int draftRevision) {
+    private static String action(String tool, String target, JsonArray commands, List<String> workLog, int draftRevision) {
         JsonObject action = new JsonObject();
         action.addProperty("tool", tool);
         if (target == null) action.add("target", null); else action.addProperty("target", target);
         action.add("nodeTypes", new JsonArray());
+        action.add("exampleTraits", new JsonArray());
+        action.add("planGoal", null);
+        action.add("planSteps", new JsonArray());
+        action.add("planNodeTypes", new JsonArray());
+        action.add("planStructures", new JsonArray());
+        action.add("planAssumptions", new JsonArray());
+        action.add("nodeRefs", new JsonArray());
+        action.add("query", null);
+        action.add("radius", null);
         action.add("exampleId", null);
         action.addProperty("draftRevision", draftRevision);
-        action.add("operations", operations == null ? new JsonArray() : operations);
+        action.add("commands", commands == null ? new JsonArray() : commands);
         action.addProperty("title", "Jump preset");
         action.addProperty("response", "Prepared for review.");
         JsonArray log = new JsonArray();
         workLog.forEach(log::add);
         action.add("workLog", log);
         return action.toString();
-    }
-
-    private static JsonObject operation(String op, String path, String valueJson) {
-        JsonObject operation = new JsonObject();
-        operation.addProperty("op", op);
-        operation.addProperty("path", path);
-        operation.addProperty("valueJson", valueJson);
-        return operation;
     }
 
     private static String describeAction(String... types) {
@@ -223,13 +303,81 @@ class AiPresetAgentTest {
         JsonArray nodeTypes = new JsonArray();
         for (String type : types) nodeTypes.add(type);
         action.add("nodeTypes", nodeTypes);
+        action.add("exampleTraits", new JsonArray());
+        action.add("planGoal", null);
+        action.add("planSteps", new JsonArray());
+        action.add("planNodeTypes", new JsonArray());
+        action.add("planStructures", new JsonArray());
+        action.add("planAssumptions", new JsonArray());
+        action.add("nodeRefs", new JsonArray());
+        action.add("query", null);
+        action.add("radius", null);
         action.add("exampleId", null);
         action.addProperty("draftRevision", 0);
-        action.add("operations", new JsonArray());
+        action.add("commands", new JsonArray());
         action.add("title", null);
         action.add("response", null);
         action.add("workLog", new JsonArray());
         return action.toString();
+    }
+
+    private static String queryAction(String tool, String type, String ref, int radius) {
+        JsonObject action = JsonParser.parseString(action(tool, null, null, List.of())).getAsJsonObject();
+        if (type != null) action.getAsJsonArray("nodeTypes").add(type);
+        if (ref != null) action.getAsJsonArray("nodeRefs").add(ref);
+        action.addProperty("radius", radius);
+        return action.toString();
+    }
+
+    private static String exampleAction(String... traits) {
+        JsonObject action = JsonParser.parseString(action("list_examples", null, null, List.of())).getAsJsonObject();
+        for (String trait : traits) action.getAsJsonArray("exampleTraits").add(trait);
+        return action.toString();
+    }
+
+    private static String planAction(String target, String goal, String... types) {
+        JsonObject action = JsonParser.parseString(action("plan_graph", target, null, List.of())).getAsJsonObject();
+        action.addProperty("planGoal", goal);
+        action.getAsJsonArray("planSteps").add("Create the requested control-flow structure.");
+        action.getAsJsonArray("planSteps").add("Validate and repair exact structural issues.");
+        for (String type : types) action.getAsJsonArray("planNodeTypes").add(type);
+        action.getAsJsonArray("planStructures").add("sequence");
+        return action.toString();
+    }
+
+    private static JsonArray simpleGraphCommands() {
+        JsonArray commands = new JsonArray();
+        commands.add(addNode("start", "START"));
+        commands.add(addNode("jump", "JUMP"));
+        commands.add(connect("start", "jump", 0, 0));
+        return commands;
+    }
+
+    private static JsonObject addNode(String ref, String type) {
+        JsonObject command = emptyCommand("add_node");
+        command.addProperty("ref", ref);
+        command.addProperty("nodeType", type);
+        return command;
+    }
+
+    private static JsonObject connect(String from, String to, int outputSocket, int inputSocket) {
+        JsonObject command = emptyCommand("connect");
+        command.addProperty("from", from);
+        command.addProperty("to", to);
+        command.addProperty("outputSocket", outputSocket);
+        command.addProperty("inputSocket", inputSocket);
+        return command;
+    }
+
+    private static JsonObject emptyCommand(String kind) {
+        JsonObject command = new JsonObject();
+        command.addProperty("kind", kind);
+        for (String field : List.of("ref", "nodeType", "mode", "parameterId", "value", "from", "to",
+            "outputSocket", "inputSocket", "host", "child", "slotIndex", "count", "sensor", "variableRef",
+            "name", "routineRef")) command.add(field, null);
+        for (String field : List.of("refs", "newRefs", "replacementRefs", "nodeTypes", "trueRefs", "falseRefs",
+            "routineInputs")) command.add(field, new JsonArray());
+        return command;
     }
 
     private static NodeGraphData simpleGraph() {
@@ -252,6 +400,15 @@ class AiPresetAgentTest {
             requests.add(request);
             String response = responses.poll();
             if (response == null) return CompletableFuture.failedFuture(new AssertionError("Unexpected agent turn"));
+            // Legacy fixtures explicitly supplied graph targets; supply the separate request assessment.
+            if (requests.size() == 1) {
+                JsonObject first = JsonParser.parseString(response).getAsJsonObject();
+                String target = first.has("target") && !first.get("target").isJsonNull() ? first.get("target").getAsString() : "inspect";
+                first.addProperty("requestIntent", target.equals("new") ? "build" : target.equals("current") ? "edit" : "diagnose");
+                String user = request.userPrompt().split("USER_REQUEST:\n", 2)[1].split("\nREQUEST_SCOPE:", 2)[0];
+                first.addProperty("intentEvidence", user);
+                response = first.toString();
+            }
             return CompletableFuture.completedFuture(response);
         }
     }

@@ -7,15 +7,26 @@ import com.pathmind.nodes.NodeType;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AiGoldenGraphLibraryTest {
     @Test
+    void focusedGeneratedPatternsBuildThroughSemanticCommands() {
+        assertDoesNotThrow(AiGoldenGraphPatterns::conditionWithSensor, "condition-with-sensor");
+        assertDoesNotThrow(AiGoldenGraphPatterns::repeatUntil, "repeat-until");
+        assertDoesNotThrow(AiGoldenGraphPatterns::nestedControls, "nested-controls");
+        assertDoesNotThrow(AiGoldenGraphPatterns::routineWithArguments, "routine-arguments");
+        assertDoesNotThrow(AiGoldenGraphPatterns::inventoryWorkflow, "inventory-workflow");
+        assertDoesNotThrow(AiGoldenGraphPatterns::navigationAndCollection, "navigation-collection");
+    }
+
+    @Test
     void bundledExamplesAreDiscoverableAndPassSerializedValidation() {
         JsonArray examples = AiGoldenGraphLibrary.list();
 
-        assertEquals(4, examples.size());
+        assertEquals(10, examples.size());
         for (int index = 0; index < examples.size(); index++) {
             String id = examples.get(index).getAsJsonObject().get("id").getAsString();
             AiGoldenGraphLibrary.Entry entry = AiGoldenGraphLibrary.find(id).orElseThrow();
@@ -49,5 +60,42 @@ class AiGoldenGraphLibraryTest {
         assertFalse(matches.isEmpty());
         assertEquals("repeat-action", matches.get(0).getAsJsonObject().get("id").getAsString());
         assertTrue(matches.get(0).getAsJsonObject().has("graph"));
+    }
+
+    @Test
+    void structuralTraitQueriesReturnOnlyTheClosestBoundedExamples() {
+        JsonArray matches = AiGoldenGraphLibrary.listMatching(Set.of(),
+            Set.of(AiExampleTrait.REPEAT_UNTIL), 20);
+
+        assertEquals(1, matches.size());
+        assertEquals("repeat-until", matches.get(0).getAsJsonObject().get("id").getAsString());
+        assertFalse(matches.get(0).getAsJsonObject().has("graph"));
+        assertFalse(matches.get(0).getAsJsonObject().has("preview"));
+    }
+
+    @Test
+    void genericScaffoldingTypesDoNotRetrieveArbitraryExamples() {
+        assertTrue(AiGoldenGraphLibrary.listMatching(Set.of(NodeType.START)).isEmpty());
+    }
+
+    @Test
+    void everyMajorStructuralConceptHasAnIndexedExample() {
+        Set<AiExampleTrait> required = Set.of(
+            AiExampleTrait.CONDITION_WITH_SENSOR,
+            AiExampleTrait.IF_ELSE,
+            AiExampleTrait.REPEAT_UNTIL,
+            AiExampleTrait.FORK_JOIN,
+            AiExampleTrait.PARAMETER_ATTACHMENTS,
+            AiExampleTrait.VARIABLES,
+            AiExampleTrait.LISTS,
+            AiExampleTrait.NESTED_CONTROLS,
+            AiExampleTrait.ROUTINE_ARGUMENTS,
+            AiExampleTrait.INVENTORY_WORKFLOW,
+            AiExampleTrait.NAVIGATION_COLLECTION
+        );
+
+        for (AiExampleTrait trait : required) {
+            assertFalse(AiGoldenGraphLibrary.listMatching(Set.of(), Set.of(trait), 1).isEmpty(), trait.name());
+        }
     }
 }

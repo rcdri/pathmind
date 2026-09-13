@@ -1,0 +1,44 @@
+[
+  {
+    "id": "lifecycle-position-return", "difficulty": "regression", "target": "current", "fixture": "reported-walk-jump",
+    "prompt": "make the preset: after it jumps, create a variable for the players current position, walk forward 5 blocks, then travel back to that position with pathfinding",
+    "expected": {
+      "outcome": "PROPOSAL", "preserveFixture": true,
+      "requiredToolGroups": [["inspect_preset","inspect_subgraph"]],
+      "requiredNodes": {"START":1,"JUMP":1,"WALK":2,"SET_VARIABLE":1,"VARIABLE":2,"SENSOR_POSITION_OF":1,"PARAM_PLAYER":1,"PARAM_DISTANCE":1,"GOTO":1},
+      "maxNodes": 15,
+      "parameters": [{"type":"PARAM_DISTANCE","name":"Distance","value":"5"},{"type":"PARAM_PLAYER","name":"Player","value":"Self"}],
+      "modes": [{"type":"SENSOR_POSITION_OF","mode":"SENSOR_POSITION_XYZ"},{"type":"GOTO","mode":"GOTO_XYZ"}],
+      "sequences": [["JUMP","SET_VARIABLE","WALK","GOTO"]],
+      "relations": [{"kind":"parameter","host":"SET_VARIABLE","child":"SENSOR_POSITION_OF","slot":1},{"kind":"parameter","host":"SENSOR_POSITION_OF","child":"PARAM_PLAYER","slot":0},{"kind":"parameter","host":"WALK","child":"PARAM_DISTANCE","slot":1},{"kind":"parameter","host":"GOTO","child":"VARIABLE","slot":0}],
+      "sharedVariables": [{"writer":"SET_VARIABLE","readerHost":"GOTO","readerSlot":0}]
+    }
+  },
+  {
+    "id":"lifecycle-discuss-not-edit","difficulty":"regression","target":"inspect","fixture":"reported-walk-jump",
+    "prompt":"What do you think about adding a saved-position return after this jump? Discuss the design, do not implement it yet.",
+    "expected":{"outcome":"ANSWER","responseContains":["position"]}
+  },
+  {
+    "id":"lifecycle-long-answer","difficulty":"regression","target":"inspect","fixture":"reported-walk-jump",
+    "prompt":"Explain this preset and the distinction between walking for five seconds and walking five blocks. Give a complete explanation of at least 500 characters with paragraphs. Do not edit anything.",
+    "expected":{"outcome":"ANSWER","minResponseChars":500,"responseContains":["seconds","blocks"]}
+  },
+  {
+    "id":"lifecycle-discarded-proposal","difficulty":"regression","target":"inspect","fixture":"reported-walk-jump",
+    "prompt":"Inspect what is actually in the current preset. Does it already save my position? Do not add anything.",
+    "context":{"messages":[{"role":"assistant","text":"I prepared a proposal adding SET_VARIABLE and a return path."},{"role":"event","text":"Proposal discarded; it was NOT applied."}],"continuity":{"changeRecords":["DISCARDED: saved-position extension; NOT APPLIED"]}},
+    "expected":{"outcome":"ANSWER","responseContains":["position"],"requiredToolGroups":[["inspect_preset","inspect_subgraph"]]}
+  },
+  {
+    "id":"lifecycle-ambiguous-selection","difficulty":"regression","target":"inspect","fixture":"reported-walk-jump",
+    "prompt":"Change that part.",
+    "expected":{"outcome":"CLARIFICATION"}
+  },
+  {
+    "id":"lifecycle-old-intent","difficulty":"regression","target":"inspect","fixture":"reported-walk-jump",
+    "prompt":"What do you think about the current graph? Only discuss it.",
+    "context":{"messages":[{"role":"user","text":"Implement a saved-position return after the jump."},{"role":"event","text":"That previous request had edit permission. It ended with a discarded proposal."}]},
+    "expected":{"outcome":"ANSWER"}
+  }
+]

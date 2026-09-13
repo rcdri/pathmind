@@ -2,7 +2,7 @@ package com.pathmind.ai;
 
 /** Provider identifiers that remain stable in user settings. */
 public enum AiProviderType {
-    OPENAI("OpenAI", "https://api.openai.com/v1/chat/completions", "gpt-4.1-mini"),
+    OPENAI("OpenAI", "https://api.openai.com/v1/responses", "gpt-4.1-mini"),
     ANTHROPIC("Anthropic", "https://api.anthropic.com/v1/messages", "claude-sonnet-4-20250514"),
     GEMINI("Gemini", "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", "gemini-2.5-flash"),
     OPENAI_COMPATIBLE("OpenAI compatible", "", "");
