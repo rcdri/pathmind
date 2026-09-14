@@ -263,6 +263,39 @@ class AiPresetAgentTest {
         assertEquals(2, proposal.graph().getNodes().size());
     }
 
+    @Test
+    void semanticRequirementsRejectAValidButWrongCraftAmountUntilRepaired() {
+        JsonObject plan = JsonParser.parseString(
+            planAction("new", "Craft four oak planks", "START", "CRAFT")).getAsJsonObject();
+        plan.getAsJsonArray("planRequirements").add(requirement("craft", "CRAFT", "Item", "minecraft:oak_planks"));
+        plan.getAsJsonArray("planRequirements").add(requirement("craft", "CRAFT", "Amount", "4"));
+
+        JsonArray wrong = new JsonArray();
+        JsonObject sequence = emptyCommand("add_sequence");
+        JsonArray refs = new JsonArray(); refs.add("start"); refs.add("craft");
+        JsonArray types = new JsonArray(); types.add("START"); types.add("CRAFT");
+        sequence.add("refs", refs); sequence.add("nodeTypes", types); wrong.add(sequence);
+        wrong.add(setParameters("craft", "minecraft:oak_planks", "1"));
+
+        JsonArray repair = new JsonArray();
+        repair.add(setParameters("craft", "minecraft:oak_planks", "4"));
+        FakeProvider provider = new FakeProvider(
+            plan.toString(),
+            action("apply_graph_commands", "new", wrong, List.of(), 0),
+            action("validate_graph", "new", null, List.of(), 1),
+            action("apply_graph_commands", "new", repair, List.of(), 1),
+            action("validate_graph", "new", null, List.of(), 2),
+            action("finish", "new", null, List.of(), 2)
+        );
+
+        AiPresetService.Proposal proposal = AiPresetAgent.run(provider, "model", "Craft 4 oak planks", "",
+            simpleGraph(), "Open", true, true).join();
+
+        assertTrue(provider.requests.get(3).userPrompt().contains("requirement_mismatch"));
+        assertTrue(provider.requests.get(3).userPrompt().contains("draft contains '1'"));
+        assertTrue(proposal.review().changes().stream().anyMatch(line -> line.contains("Craft 4× minecraft:oak_planks")));
+    }
+
     private static String action(String tool, String target, JsonArray commands, List<String> workLog) {
         return action(tool, target, commands, workLog, 0);
     }
@@ -278,6 +311,7 @@ class AiPresetAgentTest {
         action.add("planNodeTypes", new JsonArray());
         action.add("planStructures", new JsonArray());
         action.add("planAssumptions", new JsonArray());
+        action.add("planRequirements", new JsonArray());
         action.add("nodeRefs", new JsonArray());
         action.add("query", null);
         action.add("radius", null);
@@ -309,6 +343,7 @@ class AiPresetAgentTest {
         action.add("planNodeTypes", new JsonArray());
         action.add("planStructures", new JsonArray());
         action.add("planAssumptions", new JsonArray());
+        action.add("planRequirements", new JsonArray());
         action.add("nodeRefs", new JsonArray());
         action.add("query", null);
         action.add("radius", null);
@@ -351,6 +386,31 @@ class AiPresetAgentTest {
         commands.add(addNode("jump", "JUMP"));
         commands.add(connect("start", "jump", 0, 0));
         return commands;
+    }
+
+    private static JsonObject requirement(String ref, String nodeType, String parameterId, String value) {
+        JsonObject requirement = new JsonObject();
+        requirement.addProperty("ref", ref);
+        requirement.addProperty("nodeType", nodeType);
+        requirement.addProperty("parameterId", parameterId);
+        requirement.addProperty("value", value);
+        return requirement;
+    }
+
+    private static JsonObject setParameters(String ref, String item, String amount) {
+        JsonObject command = emptyCommand("set_parameters");
+        command.addProperty("ref", ref);
+        JsonArray values = new JsonArray();
+        JsonObject itemValue = new JsonObject();
+        itemValue.addProperty("parameterId", "Item");
+        itemValue.addProperty("value", item);
+        values.add(itemValue);
+        JsonObject amountValue = new JsonObject();
+        amountValue.addProperty("parameterId", "Amount");
+        amountValue.addProperty("value", amount);
+        values.add(amountValue);
+        command.add("parameterValues", values);
+        return command;
     }
 
     private static JsonObject addNode(String ref, String type) {
@@ -399,7 +459,8 @@ class AiPresetAgentTest {
         public CompletableFuture<String> generate(AiPresetRequest request) {
             requests.add(request);
             String response = responses.poll();
-            if (response == null) return CompletableFuture.failedFuture(new AssertionError("Unexpected agent turn"));
+            if (response == null) return CompletableFuture.failedFuture(new AssertionError("Unexpected agent turn after: "
+                + (requests.size() < 2 ? "first request" : requests.get(requests.size() - 2).userPrompt())));
             // Legacy fixtures explicitly supplied graph targets; supply the separate request assessment.
             if (requests.size() == 1) {
                 JsonObject first = JsonParser.parseString(response).getAsJsonObject();

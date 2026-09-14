@@ -27,7 +27,7 @@
   {
     "id":"lifecycle-discarded-proposal","difficulty":"regression","target":"inspect","fixture":"reported-walk-jump",
     "prompt":"Inspect what is actually in the current preset. Does it already save my position? Do not add anything.",
-    "context":{"messages":[{"role":"assistant","text":"I prepared a proposal adding SET_VARIABLE and a return path."},{"role":"event","text":"Proposal discarded; it was NOT applied."}],"continuity":{"changeRecords":["DISCARDED: saved-position extension; NOT APPLIED"]}},
+    "context":{"messages":[{"role":"assistant","text":"I prepared a proposal adding SET_VARIABLE and a return path."},{"role":"event","text":"Proposal discarded; it was NOT applied."}],"changeHistory":{"records":["DISCARDED: saved-position extension; NOT APPLIED"]}},
     "expected":{"outcome":"ANSWER","responseContains":["position"],"requiredToolGroups":[["inspect_preset","inspect_subgraph"]]}
   },
   {

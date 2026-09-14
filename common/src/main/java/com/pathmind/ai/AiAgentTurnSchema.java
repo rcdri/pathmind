@@ -12,6 +12,16 @@ public final class AiAgentTurnSchema {
     }
 
     public static JsonObject create() {
+        JsonObject parameterValue = object(
+            property("parameterId", described(string(), "Exact parameter id from the node contract.")),
+            property("value", described(string(), "Typed parameter value serialized as text."))
+        );
+        JsonObject planRequirement = object(
+            property("ref", described(string(), "Node alias the plan will create or edit.")),
+            property("nodeType", described(enumValues(NodeType.values()), "Expected node type for the alias.")),
+            property("parameterId", described(string(), "Exact behavior-shaping parameter id.")),
+            property("value", described(string(), "Required final value serialized according to its parameter type."))
+        );
         JsonObject routineInput = object(
             property("label", described(string(), "User-facing routine argument label.")),
             property("valueKind", described(enumValues(RoutineValueKind.values()), "Typed value family accepted by the routine argument.")),
@@ -21,20 +31,21 @@ public final class AiAgentTurnSchema {
             property("slotIndex", described(nullable(integer()), "Body parameter slot used with bindToRef."))
         );
         JsonObject command = object(
-            property("kind", described(enumString("add_node", "set_mode", "set_parameter", "connect",
+            property("kind", described(enumString("add_node", "set_mode", "set_parameter", "set_parameters", "connect",
                 "disconnect", "attach_action", "attach_sensor", "attach_parameter", "detach_action",
-                "detach_sensor", "detach_parameter", "remove_node", "add_sequence",
+                "detach_sensor", "detach_parameter", "remove_node", "add_sequence", "insert_sequence_after",
                 "wrap_in_repeat", "wrap_in_condition", "create_branch", "declare_variable", "declare_list",
                 "clone_subgraph", "replace_subgraph", "create_routine", "add_routine_call", "auto_layout"),
                 "The semantic graph mutation to perform.")),
-            property("ref", described(nullable(string()), "A short reference for add_node, set_mode, set_parameter, or remove_node.")),
+            property("ref", described(nullable(string()), "A short node reference, or the existing anchor for insert_sequence_after.")),
             property("nodeType", described(nullable(enumValues(NodeType.values())), "The catalog node type for add_node.")),
             property("mode", described(nullable(enumValues(NodeMode.values())), "The exact catalog mode for set_mode.")),
             property("parameterId", described(nullable(string()), "The exact catalog parameter id for set_parameter.")),
             property("value", described(nullable(string()), "The user-facing parameter value for set_parameter.")),
+            property("parameterValues", described(array(parameterValue), "Related typed values set atomically by set_parameters.")),
             property("from", described(nullable(string()), "Source node reference for connect.")),
             property("to", described(nullable(string()), "Destination node reference for connect.")),
-            property("outputSocket", described(nullable(integer()), "Zero-based source socket for connect.")),
+            property("outputSocket", described(nullable(integer()), "Zero-based source socket for connect or insertion after an anchor.")),
             property("inputSocket", described(nullable(integer()), "Zero-based destination socket for connect.")),
             property("host", described(nullable(string()), "Host node reference for attachment commands.")),
             property("child", described(nullable(string()), "Child node reference for attachment commands.")),
@@ -42,7 +53,7 @@ public final class AiAgentTurnSchema {
             property("refs", described(array(string()), "Ordered node references for sequence and subgraph operations.")),
             property("newRefs", described(array(string()), "New aliases corresponding to refs for clone_subgraph.")),
             property("replacementRefs", described(array(string()), "Ordered existing replacement nodes for replace_subgraph.")),
-            property("nodeTypes", described(array(enumValues(NodeType.values())), "Ordered catalog types for add_sequence.")),
+            property("nodeTypes", described(array(enumValues(NodeType.values())), "Ordered catalog types for add_sequence or insert_sequence_after.")),
             property("count", described(nullable(integer()), "Positive repeat count for wrap_in_repeat.")),
             property("sensor", described(nullable(string()), "Existing boolean sensor reference for conditional composition.")),
             property("trueRefs", described(array(string()), "Ordered true-branch node references for create_branch.")),
@@ -67,6 +78,7 @@ public final class AiAgentTurnSchema {
                 "nested_control", "routine_arguments", "inventory", "navigation_collection")),
                 "High-level structures the plan expects to build or edit.")),
             property("planAssumptions", described(array(string()), "At most four user-visible assumptions that affect graph structure.")),
+            property("planRequirements", described(array(planRequirement), "Machine-readable final parameter values explicitly required by the user. Use one entry per required node parameter; do not encode multiple values in one string.")),
             property("nodeTypes", array(enumValues(NodeType.values()))),
             property("exampleTraits", described(array(enumValues(AiExampleTrait.values())),
                 "Structural traits used to retrieve only relevant golden examples.")),
@@ -79,12 +91,9 @@ public final class AiAgentTurnSchema {
             property("title", nullable(string())),
             property("response", described(nullable(string()), "User-visible reply: default 1-3 short plain-language sentences, usually under 60 words. State the answer/proposed change and essential caveat only. Do not duplicate tool logs or execution previews. Expand only when the user asks for detail or an important limitation requires it.")),
             property("completion", described(nullable(enumString("complete", "clarification", "blocked")), "finish: answer or validated proposal, clarification question, or specific blocker. Null means complete.")),
-            property("completionReason", described(nullable(string()), "For clarification: identify essential missing information and why the latest reply, earlier user messages, summary, preferences and workspace do not already resolve it. Do not re-ask answered questions. For blocked: explain the confirmed tool failure. Inspect is never itself a blocker.")),
-            property("blockingToolTurn", described(nullable(integer()), "For blocked, cite an actual prior failed tool turn confirming missing context/capability, rejected graph commands, or failed validation. Permission/scope selection errors do not establish inability.")),
-            property("workLog", array(string())),
-            property("continuityGoal", described(nullable(string()), "On finish, refresh the concise ongoing user goal (max 800 chars), or null if unchanged. No graph snapshots or permission choices.")),
-            property("continuityDecisions", described(array(string()), "On finish, up to eight confirmed USER decisions, not model suggestions or proposed changes. Preserve earlier still relevant decisions.")),
-            property("continuityUnfinished", described(array(string()), "On finish, up to eight unresolved tasks/questions. A proposal awaits review and is not applied. No serialized graphs or permission modes."))
+            property("completionReason", described(nullable(string()), "For clarification: identify essential missing information and why the latest reply, earlier user messages and workspace do not already resolve it. Do not re-ask answered questions. For blocked: explain the confirmed tool failure. Inspect is never itself a blocker.")),
+            property("blockingToolTurn", described(nullable(integer()), "For blocked, cite an actual prior failed tool turn confirming missing context/capability or failed validation. Recoverable graph-command and permission/scope errors do not establish inability.")),
+            property("workLog", array(string()))
         );
     }
 

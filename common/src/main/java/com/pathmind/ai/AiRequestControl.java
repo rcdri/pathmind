@@ -9,9 +9,6 @@ public final class AiRequestControl {
     private final Consumer<AiRequestProgress> observer;
     private final List<Runnable> cancellationHandlers = new ArrayList<>();
     private volatile boolean cancelled;
-    private volatile AiConversationSummary summary;
-    public AiConversationSummary summary() { return summary; }
-    void summary(AiConversationSummary summary) { if (!cancelled) this.summary = summary; }
     public AiRequestControl() { this(progress -> { }); }
     public AiRequestControl(Consumer<AiRequestProgress> observer) { this.observer = observer; }
     public boolean isCancelled() { return cancelled; }

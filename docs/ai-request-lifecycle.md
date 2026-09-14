@@ -78,35 +78,23 @@ Merely hiding the popup does not cancel work. HTTP cancellation is best effort;
 it does not guarantee that a provider stops already received work or refunds usage.
 No provider background mode or additional server-side conversation storage is enabled.
 
-## Workspace context and continuity
+## Conversation and workspace context
 
-The archive remains complete and local. The request context has four distinct layers:
+The archive remains complete and local. Request context has two user-facing sources:
 
 - Recent saved conversation, within a shared 24,000-character conversation budget.
 - Fresh workspace facts: active preset name/fingerprint, node/routine counts, and up
   to 64 deterministic selected node IDs. IDs absent from the current graph are removed.
   Additional selected nodes are counted explicitly. Actual graph details come from
   inspection tools against the same request-time snapshot, not historical chat.
-- A compact, AI-authored conversational summary: goal, confirmed user decisions,
-  unresolved work. `finish` refreshes it without an extra provider request. A successful,
-  non-cancelled request saves it; an omitted goal retains the existing goal while still
-  accepting updated decisions and unresolved work. It is
-  advisory and visible, never a graph snapshot or edit authorization. Older archives
-  start without summaries; this cannot recover information that was never saved or
-  no longer reaches the model. Summarization quality still needs live evaluation.
-- Explicit, user-edited preferences, shared across providers. The AI cannot write
-  preferences. They are defaults subordinate to the latest request, not permission.
-
-Summaries and recent lifecycle receipts are provider-isolated. Application-authored
+Application-authored lifecycle receipts are provider-isolated.
 PROPOSED/APPLIED/DISCARDED receipts retain preset identity, fingerprint, timestamp,
 and compact accepted graph changes, separate from assistant claims. Receipt history
 is not proof of the current graph; the fresh fingerprint and inspection are authoritative.
 Older pending-review claims must yield to later application/discard receipts.
 
-Open AI settings → Context & preferences to inspect/clear the summary and edit
-preferences in the multiline composer. Press its arrow (or Enter) to save; Shift+Enter
-adds a line. Back leaves without saving and restores the unsent chat draft. Resetting
-chat clears that provider's history, summary, and receipts; explicit preferences survive
-and can be removed by saving an empty field. Neither chat nor notes are encrypted;
-the API key is kept in the existing separate secret store. Nothing new is saved at
-the provider. Summary and preference safety limits reject oversized data explicitly.
+There is no separate AI summary, memory, or preferences panel. Resetting chat clears
+that provider's messages and lifecycle receipts. Existing summary/preferences fields
+from earlier builds are removed when the history file loads. Chat is not encrypted;
+the API key remains in the existing separate secret store. Nothing new is saved at
+the provider.

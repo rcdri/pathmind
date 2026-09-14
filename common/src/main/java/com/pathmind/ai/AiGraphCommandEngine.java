@@ -37,12 +37,13 @@ public final class AiGraphCommandEngine {
 
     public static Result apply(JsonObject source, JsonArray commands, Map<String, String> knownReferences,
                                boolean baritoneAvailable, boolean uiUtilsAvailable) {
-        if (source == null) return Result.failure("No graph draft is available.");
-        if (commands == null || commands.isEmpty()) return Result.failure("No graph commands were supplied.");
-        if (commands.size() > MAX_COMMANDS) return Result.failure("A command batch may contain at most " + MAX_COMMANDS + " commands.");
+        if (source == null) return Result.failure("context_unavailable", false, "No graph draft is available.");
+        if (commands == null || commands.isEmpty()) return Result.failure("command_rejected", true, "No graph commands were supplied.");
+        if (commands.size() > MAX_COMMANDS) return Result.failure("command_rejected", true,
+            "A command batch may contain at most " + MAX_COMMANDS + " commands.");
         try {
             NodeGraphData draft = NodeGraphPersistence.parseNodeGraphData(source.deepCopy().toString());
-            if (draft == null) return Result.failure("The graph draft could not be read.");
+            if (draft == null) return Result.failure("context_unavailable", false, "The graph draft could not be read.");
             if (draft.getNodes() == null) draft.setNodes(new ArrayList<>());
             if (draft.getConnections() == null) draft.setConnections(new ArrayList<>());
             Map<String, String> references = new LinkedHashMap<>();
@@ -54,9 +55,13 @@ public final class AiGraphCommandEngine {
                 applyOne(draft, element.getAsJsonObject(), references, effects, baritoneAvailable, uiUtilsAvailable);
             }
             return new Result(true, GSON.toJsonTree(draft).getAsJsonObject(), Map.copyOf(references), effects,
+                parameterReadback(draft, commands, references), "", false,
                 "Applied " + commands.size() + " semantic graph command(s).");
+        } catch (CommandFailure failure) {
+            return Result.failure(failure.code(), failure.recoverable(), failure.getMessage());
         } catch (RuntimeException exception) {
-            return Result.failure(exception.getMessage() == null ? "The graph command batch was invalid." : exception.getMessage());
+            return Result.failure("command_rejected", true,
+                exception.getMessage() == null ? "The graph command batch was invalid." : exception.getMessage());
         }
     }
 
@@ -67,6 +72,7 @@ public final class AiGraphCommandEngine {
             case "add_node" -> addNode(graph, command, references, effects, baritoneAvailable, uiUtilsAvailable);
             case "set_mode" -> setMode(graph, command, references, effects);
             case "set_parameter" -> setParameter(graph, command, references, effects);
+            case "set_parameters" -> setParameters(graph, command, references, effects);
             case "connect" -> connect(graph, command, references, effects);
             case "disconnect" -> disconnect(graph, command, references, effects);
             case "attach_action" -> attach(graph, command, references, effects, NodeSlotType.ACTION);
@@ -77,6 +83,8 @@ public final class AiGraphCommandEngine {
             case "detach_parameter" -> detach(graph, command, references, effects, NodeSlotType.PARAMETER);
             case "remove_node" -> removeNode(graph, command, references, effects);
             case "add_sequence" -> addSequence(graph, command, references, effects, baritoneAvailable, uiUtilsAvailable);
+            case "insert_sequence_after" -> insertSequenceAfter(graph, command, references, effects,
+                baritoneAvailable, uiUtilsAvailable);
             case "wrap_in_repeat" -> wrapInControl(graph, command, references, effects, NodeType.CONTROL_REPEAT,
                 baritoneAvailable, uiUtilsAvailable);
             case "wrap_in_condition" -> wrapInControl(graph, command, references, effects, NodeType.CONTROL_IF_DO,
@@ -130,22 +138,65 @@ public final class AiGraphCommandEngine {
     private static void setParameter(NodeGraphData graph, JsonObject command, Map<String, String> references, JsonArray effects) {
         NodeGraphData.NodeData node = resolveNode(graph, references, requiredReference(command, "ref"));
         String parameterId = requiredString(command, "parameterId");
-        String normalized = NodeParameter.createDefaultId(parameterId);
-        NodeGraphData.ParameterData parameter = null;
-        for (NodeGraphData.ParameterData candidate : safeParameters(node)) {
-            if (candidate == null) continue;
-            if (parameterId.equals(candidate.getName()) || normalized.equals(NodeParameter.createDefaultId(candidate.getId()))) {
-                parameter = candidate;
-                break;
+        if (node.getType() == NodeType.CRAFT && ("item".equals(NodeParameter.createDefaultId(parameterId))
+            || "amount".equals(NodeParameter.createDefaultId(parameterId)))) {
+            throw new CommandFailure("atomic_parameters_required", true,
+                "Set Craft item and amount together with set_parameters so the node cannot keep a stale default.");
+        }
+        setValidatedParameter(node, parameterId, requiredString(command, "value"));
+        effects.add("Set " + displayRef(command, "ref", node) + "." + NodeParameter.createDefaultId(parameterId) + ".");
+    }
+
+    private static void setParameters(NodeGraphData graph, JsonObject command, Map<String, String> references,
+                                      JsonArray effects) {
+        NodeGraphData.NodeData node = resolveNode(graph, references, requiredReference(command, "ref"));
+        JsonArray values = requiredArray(command, "parameterValues");
+        if (values.isEmpty() || values.size() > 16) {
+            throw new IllegalArgumentException("set_parameters requires 1 to 16 parameterValues.");
+        }
+        Map<String, String> requested = new LinkedHashMap<>();
+        for (JsonElement element : values) {
+            if (!element.isJsonObject()) throw new IllegalArgumentException("Every parameterValues entry must be an object.");
+            JsonObject entry = element.getAsJsonObject();
+            String parameterId = requiredString(entry, "parameterId");
+            String normalized = NodeParameter.createDefaultId(parameterId);
+            if (requested.putIfAbsent(normalized, requiredString(entry, "value")) != null) {
+                throw new IllegalArgumentException("Parameter '" + parameterId + "' was supplied more than once.");
             }
         }
-        if (parameter == null) {
-            throw new IllegalArgumentException("Node " + displayRef(command, "ref", node) + " has no parameter '" + parameterId + "'. Describe its node contract and use an exact parameter id.");
+        if (node.getType() == NodeType.CRAFT && (requested.containsKey("item") || requested.containsKey("amount"))
+            && !(requested.containsKey("item") && requested.containsKey("amount"))) {
+            throw new CommandFailure("incomplete_parameter_group", true,
+                "Craft configuration requires both Item and Amount in the same set_parameters command.");
         }
-        String value = requiredString(command, "value");
-        parameter.setValue(value);
-        parameter.setUserEdited(true);
-        effects.add("Set " + displayRef(command, "ref", node) + "." + parameter.getId() + ".");
+        List<PendingParameter> checked = new ArrayList<>();
+        requested.forEach((parameterId, value) -> checked.add(validateParameter(node, parameterId, value)));
+        for (PendingParameter pending : checked) {
+            pending.parameter().setValue(pending.value());
+            pending.parameter().setUserEdited(true);
+        }
+        effects.add("Set " + checked.size() + " validated parameter(s) on " + displayRef(command, "ref", node) + ".");
+    }
+
+    private static void setValidatedParameter(NodeGraphData.NodeData node, String parameterId, String value) {
+        PendingParameter checked = validateParameter(node, parameterId, value);
+        checked.parameter().setValue(checked.value());
+        checked.parameter().setUserEdited(true);
+    }
+
+    private static PendingParameter validateParameter(NodeGraphData.NodeData node, String parameterId, String value) {
+        String normalized = NodeParameter.createDefaultId(parameterId);
+        NodeGraphData.ParameterData parameter = safeParameters(node).stream().filter(candidate -> candidate != null
+            && (parameterId.equals(candidate.getName()) || normalized.equals(NodeParameter.createDefaultId(candidate.getId()))))
+            .findFirst().orElseThrow(() -> new IllegalArgumentException("Node " + node.getType()
+                + " has no parameter '" + parameterId + "'. Describe its node contract and use an exact parameter id."));
+        try {
+            AiParameterValidator.CheckedValue checked = AiParameterValidator.validate(
+                node.getType(), node.getMode(), parameter.getId(), value);
+            return new PendingParameter(parameter, checked.value());
+        } catch (IllegalArgumentException exception) {
+            throw new CommandFailure("invalid_parameter_value", true, exception.getMessage());
+        }
     }
 
     private static void connect(NodeGraphData graph, JsonObject command, Map<String, String> references, JsonArray effects) {
@@ -170,10 +221,21 @@ public final class AiGraphCommandEngine {
         for (NodeGraphData.ConnectionData existing : graph.getConnections()) {
             if (existing == null) continue;
             if (from.getId().equals(existing.getOutputNodeId()) && outputSocket == existing.getOutputSocket()) {
-                throw new IllegalArgumentException("Output socket " + outputSocket + " on " + displayRef(command, "from", from) + " is already connected.");
+                NodeGraphData.NodeData current = findNode(graph, existing.getInputNodeId());
+                String destination = current == null ? "node '" + existing.getInputNodeId() + "'"
+                    : current.getType() + " '" + referenceFor(current, references) + "'";
+                throw new CommandFailure("occupied_output", true, "Output socket " + outputSocket + " on "
+                    + displayRef(command, "from", from) + " is already connected to " + destination + " input socket "
+                    + existing.getInputSocket() + ". Use insert_sequence_after to preserve that downstream connection, "
+                    + "or disconnect it explicitly before rewiring.");
             }
             if (to.getId().equals(existing.getInputNodeId()) && inputSocket == existing.getInputSocket()) {
-                throw new IllegalArgumentException("Input socket " + inputSocket + " on " + displayRef(command, "to", to) + " is already connected.");
+                NodeGraphData.NodeData current = findNode(graph, existing.getOutputNodeId());
+                String source = current == null ? "node '" + existing.getOutputNodeId() + "'"
+                    : current.getType() + " '" + referenceFor(current, references) + "'";
+                throw new CommandFailure("occupied_input", true, "Input socket " + inputSocket + " on "
+                    + displayRef(command, "to", to) + " is already connected from " + source + " output socket "
+                    + existing.getOutputSocket() + ". Disconnect the existing edge explicitly before rewiring.");
             }
         }
         graph.getConnections().add(new NodeGraphData.ConnectionData(from.getId(), to.getId(), outputSocket, inputSocket));
@@ -299,6 +361,37 @@ public final class AiGraphCommandEngine {
                 "outputSocket", 0, "inputSocket", 0), references, effects);
         }
         effects.add("Built a connected sequence of " + refs.size() + " nodes.");
+    }
+
+    private static void insertSequenceAfter(NodeGraphData graph, JsonObject command, Map<String, String> references,
+                                            JsonArray effects, boolean baritoneAvailable, boolean uiUtilsAvailable) {
+        String anchorRef = requiredReference(command, "ref");
+        NodeGraphData.NodeData anchor = resolveNode(graph, references, anchorRef);
+        int outputSocket = requiredInteger(command, "outputSocket");
+        NodeGraphData.ConnectionData downstream = null;
+        for (NodeGraphData.ConnectionData edge : graph.getConnections()) {
+            if (edge == null || !anchor.getId().equals(edge.getOutputNodeId()) || outputSocket != edge.getOutputSocket()) continue;
+            if (downstream != null) {
+                throw new CommandFailure("ambiguous_splice", true, "The selected output has multiple downstream edges. "
+                    + "Inspect the subgraph and rewire those edges explicitly.");
+            }
+            downstream = edge;
+        }
+
+        if (downstream != null) graph.getConnections().remove(downstream);
+        addSequence(graph, command, references, effects, baritoneAvailable, uiUtilsAvailable);
+        List<String> refs = requiredReferences(command, "refs");
+        connect(graph, command("connect", "from", anchorRef, "to", refs.get(0),
+            "outputSocket", outputSocket, "inputSocket", 0), references, effects);
+        if (downstream != null) {
+            NodeGraphData.NodeData successor = findNode(graph, downstream.getInputNodeId());
+            if (successor == null) throw new IllegalArgumentException("The downstream splice target no longer exists.");
+            connect(graph, command("connect", "from", refs.get(refs.size() - 1),
+                "to", referenceFor(successor, references), "outputSocket", 0,
+                "inputSocket", downstream.getInputSocket()), references, effects);
+        }
+        effects.add("Inserted " + refs.size() + " node(s) after '" + anchorRef
+            + "' while preserving its previous downstream connection.");
     }
 
     private static void wrapInControl(NodeGraphData graph, JsonObject command, Map<String, String> references,
@@ -798,6 +891,45 @@ public final class AiGraphCommandEngine {
         return result;
     }
 
+    private static JsonArray parameterReadback(NodeGraphData graph, JsonArray commands,
+                                               Map<String, String> references) {
+        Set<String> requestedRefs = new LinkedHashSet<>();
+        for (JsonElement element : commands) {
+            if (!element.isJsonObject()) continue;
+            JsonObject command = element.getAsJsonObject();
+            String ref = nullableString(command, "ref");
+            if (ref != null && !ref.isBlank()) requestedRefs.add(ref);
+            if (command.has("refs") && command.get("refs").isJsonArray()) {
+                for (JsonElement value : command.getAsJsonArray("refs")) {
+                    if (value.isJsonPrimitive()) requestedRefs.add(value.getAsString());
+                }
+            }
+        }
+        JsonArray readback = new JsonArray();
+        for (String ref : requestedRefs) {
+            if (readback.size() >= 24) break;
+            NodeGraphData.NodeData node = findNode(graph, references.getOrDefault(ref, ref));
+            if (node == null) continue;
+            if (safeParameters(node).isEmpty()) continue;
+            JsonObject item = new JsonObject();
+            item.addProperty("ref", ref);
+            item.addProperty("nodeId", node.getId());
+            item.addProperty("nodeType", node.getType().name());
+            JsonArray parameters = new JsonArray();
+            for (NodeGraphData.ParameterData parameter : safeParameters(node)) {
+                if (parameter == null) continue;
+                JsonObject actual = new JsonObject();
+                actual.addProperty("parameterId", parameter.getId());
+                actual.addProperty("type", parameter.getType());
+                actual.addProperty("value", parameter.getValue());
+                parameters.add(actual);
+            }
+            item.add("parameters", parameters);
+            readback.add(item);
+        }
+        return readback;
+    }
+
     private static List<NodeGraphData.ParameterData> safeParameters(NodeGraphData.NodeData node) {
         if (node.getParameters() == null) node.setParameters(new ArrayList<>());
         return node.getParameters();
@@ -868,12 +1000,32 @@ public final class AiGraphCommandEngine {
     }
 
     public record Result(boolean success, JsonObject graph, Map<String, String> references,
-                         JsonArray effects, String message) {
-        static Result failure(String message) { return new Result(false, null, Map.of(), new JsonArray(), message); }
+                         JsonArray effects, JsonArray actualValues, String errorCode,
+                         boolean recoverable, String message) {
+        static Result failure(String errorCode, boolean recoverable, String message) {
+            return new Result(false, null, Map.of(), new JsonArray(), new JsonArray(),
+                errorCode, recoverable, message);
+        }
+    }
+
+    private static final class CommandFailure extends IllegalArgumentException {
+        private final String code;
+        private final boolean recoverable;
+
+        private CommandFailure(String code, boolean recoverable, String message) {
+            super(message);
+            this.code = code;
+            this.recoverable = recoverable;
+        }
+
+        private String code() { return code; }
+        private boolean recoverable() { return recoverable; }
     }
 
     private record Boundary(NodeGraphData.NodeData first, NodeGraphData.NodeData last,
                             NodeGraphData.ConnectionData incoming, NodeGraphData.ConnectionData outgoing) { }
+
+    private record PendingParameter(NodeGraphData.ParameterData parameter, String value) { }
 
     private record RoutineInputBinding(String inputId, String bindToRef, Integer slotIndex) { }
 }

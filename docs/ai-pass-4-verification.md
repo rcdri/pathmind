@@ -3,7 +3,7 @@
 ## Offline evidence
 
 Tests use real graph commands, conversion/validation, behavior grading, intent/scope
-guards, history/summary persistence, callback generations, cancellation, and chat layout.
+guards, history persistence, callback generations, cancellation, and chat layout.
 Providers are scripted. Passing these tests demonstrates application safeguards and
 graders, **not** model tool selection quality or real Minecraft movement.
 
@@ -14,7 +14,7 @@ and produces a concise proposal without changing the source fixture.
 Valid-but-wrong seconds, return-variable, and capture-order graphs fail behavior grading.
 Other tests cover discussion vs implementation, clarification, cancelled/late responses,
 reset/provider-switch callback rejection, discarded/unaccepted proposals, long messages,
-and continuity subordinate to fresh graph state.
+and recent chat subordinate to fresh graph state.
 
 ```sh
 ./gradlew test
@@ -65,11 +65,11 @@ benchmark graphs in an important world/server.
    when the intended change is ambiguous.
 5. Discard a proposal, then inspect what's present; discarded changes must not be
    described as applied. Manually edit while a request runs; stale Apply must fail.
-6. Stop/reset/switch providers during requests. No later progress, response, proposal,
-   or summary may resurrect that request.
+6. Stop/reset/switch providers during requests. No later progress, response, or proposal
+   may resurrect that request.
 7. Request a long multiline explanation. Resize/scroll, expand Details, and use Latest.
    Require complete text and stable reading position. Reopen editor/game and verify
-   history/summary/preferences persistence and the stated reset behavior.
+   chat-history persistence and the stated reset behavior.
 
 Record build, Minecraft version, provider/model, case/repetition, observations, and
 failures. Mark live/world checks passed only after observing them. Model and world

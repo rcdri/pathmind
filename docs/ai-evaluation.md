@@ -107,8 +107,8 @@ an explicit reset first moves it to a timestamped `.unreadable-*` backup.
 The full visible archive is retained, but model input uses a recent-history window
 of at most 24,000 characters, with individual long messages shortened to 8,000.
 Omitted older entries are explicitly marked. Display-only work logs and diagnostics
-are excluded from model context. Summaries and explicit preferences now share this
-bounded context budget; see [request lifecycle](ai-request-lifecycle.md) for their rules.
+are excluded from model context. There is no separate AI-authored summary or persistent
+preferences layer; see [request lifecycle](ai-request-lifecycle.md) for context rules.
 The current prompt is sent once, and fresh live-preset inspection remains
 authoritative; historical proposals do not imply that edits were accepted.
 

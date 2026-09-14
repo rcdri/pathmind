@@ -94,7 +94,27 @@ public record AiProposalReview(List<String> changes, List<String> executionPaths
     }
 
     private static String nodeLabel(NodeGraphData.NodeData node) {
-        return (node.getType() == null ? "UNKNOWN" : node.getType().name()) + " [" + node.getId() + "]";
+        String label = (node.getType() == null ? "UNKNOWN" : node.getType().name()) + " [" + node.getId() + "]";
+        String behavior = behaviorSummary(node);
+        return behavior.isBlank() ? label : label + " — " + behavior;
+    }
+
+    private static String behaviorSummary(NodeGraphData.NodeData node) {
+        if (node.getType() != com.pathmind.nodes.NodeType.CRAFT) return "";
+        String item = parameter(node, "item");
+        String amount = parameter(node, "amount");
+        if (item == null || amount == null) return "";
+        return "Craft " + amount + "× " + item;
+    }
+
+    private static String parameter(NodeGraphData.NodeData node, String id) {
+        if (node.getParameters() == null) return null;
+        for (NodeGraphData.ParameterData parameter : node.getParameters()) {
+            if (parameter != null && id.equals(com.pathmind.nodes.NodeParameter.createDefaultId(parameter.getId()))) {
+                return parameter.getValue();
+            }
+        }
+        return null;
     }
 
     private static boolean present(String value) { return value != null && !value.isBlank(); }

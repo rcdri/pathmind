@@ -176,6 +176,30 @@ class AiRequestIntentTest {
         assertTrue(report.trace().stream().anyMatch(step -> step.code().equals("unconfirmed_blocker")));
     }
 
+    @Test void aRecoverableWiringConflictCannotBeUsedAsEvidenceThatEditingIsImpossible() {
+        String user = "Append a wait to this preset";
+        var blocked = action("finish", "current");
+        blocked.addProperty("completion", "blocked");
+        blocked.addProperty("completionReason", "The output was already connected.");
+        blocked.addProperty("response", "I could not update the preset.");
+        blocked.addProperty("blockingToolTurn", 4);
+        var rejectedPatch = action("apply_graph_commands", "current");
+        rejectedPatch.addProperty("draftRevision", 0);
+        rejectedPatch.add("commands", JsonParser.parseString("""
+            [{"kind":"add_node","ref":"wait","nodeType":"WAIT"},
+             {"kind":"connect","from":"start","to":"wait","outputSocket":0,"inputSocket":0}]
+            """));
+
+        var report = run(new Script(decision("assess_request", "current", "edit", user),
+            action("inspect_preset", "current"), plan("current"), rejectedPatch, blocked,
+            patch("current"), action("validate_graph", "current"), action("finish", "current")), user, fixture());
+
+        assertTrue(report.succeeded(), report.error());
+        assertTrue(report.trace().stream().anyMatch(step -> step.code().equals("occupied_output")));
+        assertTrue(report.trace().stream().anyMatch(step -> step.code().equals("unconfirmed_blocker")));
+        assertEquals(AiCompletionOutcome.PROPOSAL, report.proposal().outcome());
+    }
+
     @Test void nativeOpenAiToolsCarryIntentThroughActualCallResultPairing() {
         String user = "What do you think about routines?";
         var responses = new ArrayDeque<JsonObject>();

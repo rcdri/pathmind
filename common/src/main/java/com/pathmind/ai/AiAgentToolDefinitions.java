@@ -23,14 +23,14 @@ public final class AiAgentToolDefinitions {
         add(tools, envelope, "find_nodes", "Search existing draft nodes by type or text without requesting the whole graph.", "nodeTypes", "query");
         add(tools, envelope, "inspect_subgraph", "Inspect only nodeRefs and a bounded radius (0 to 3). Prefer focused queries when repairing.", "nodeRefs", "radius");
         add(tools, envelope, "plan_graph", "Record a concise outcome and 1-8 structural steps before the first edit. No hidden reasoning.",
-            "planGoal", "planSteps", "planNodeTypes", "planStructures", "planAssumptions");
+            "planGoal", "planSteps", "planNodeTypes", "planStructures", "planAssumptions", "planRequirements");
         JsonObject commands = envelope.getAsJsonObject("commands").deepCopy();
         commands.add("items", commandSchema(envelope.getAsJsonObject("commands").getAsJsonObject("items").getAsJsonObject("properties")));
         envelope.add("commands", commands);
-        add(tools, envelope, "apply_graph_commands", "Atomically apply up to 48 semantic commands to the isolated draft at draftRevision. Pathmind owns IDs/defaults/serialization. Results provide refs and effects; a rejected batch changes nothing.", "draftRevision", "commands");
+        add(tools, envelope, "apply_graph_commands", "Atomically apply up to 48 semantic commands to the isolated draft at draftRevision. Pathmind owns IDs/defaults/serialization. Use insert_sequence_after to splice new nodes after an already-connected node without losing its successor. Recoverable rejection results explain how to repair, and a rejected batch changes nothing.", "draftRevision", "commands");
         add(tools, envelope, "validate_graph", "Run real validators and return repair-oriented errors plus execution preview. After success, finish; after failure, repair the indicated relationship.");
         add(tools, envelope, "preview_execution", "Preview structural execution without running world actions. Successful validation already returns this preview.");
-        add(tools, envelope, "finish", "Answer, return a validated proposal, ask clarification, or explain a blocker supported by blockingToolTurn. Edit/build cannot complete with advice. Refresh conversational continuity: only user goals, confirmed decisions and unresolved work, never graph snapshots or permission choices. Application generates workLog from tool outcomes; never commit a preset.", "title", "response", "workLog", "completion", "completionReason", "blockingToolTurn", "continuityGoal", "continuityDecisions", "continuityUnfinished");
+        add(tools, envelope, "finish", "Answer, return a validated proposal, ask clarification, or explain a blocker supported by blockingToolTurn. Edit/build cannot complete with advice. Application generates workLog from tool outcomes; never commit a preset.", "title", "response", "workLog", "completion", "completionReason", "blockingToolTurn");
         return tools;
     }
 
@@ -61,6 +61,7 @@ public final class AiAgentToolDefinitions {
         kinds.put("add_node", new String[] {"ref", "nodeType"});
         kinds.put("set_mode", new String[] {"ref", "mode"});
         kinds.put("set_parameter", new String[] {"ref", "parameterId", "value"});
+        kinds.put("set_parameters", new String[] {"ref", "parameterValues"});
         for (String kind : new String[] {"connect", "disconnect"}) kinds.put(kind, new String[] {"from", "to", "outputSocket", "inputSocket"});
         for (String kind : new String[] {"attach_action", "attach_sensor"}) kinds.put(kind, new String[] {"host", "child"});
         kinds.put("attach_parameter", new String[] {"host", "child", "slotIndex"});
@@ -68,6 +69,7 @@ public final class AiAgentToolDefinitions {
         kinds.put("detach_parameter", new String[] {"host", "slotIndex"});
         kinds.put("remove_node", new String[] {"ref"});
         kinds.put("add_sequence", new String[] {"refs", "nodeTypes"});
+        kinds.put("insert_sequence_after", new String[] {"ref", "refs", "nodeTypes", "outputSocket"});
         kinds.put("wrap_in_repeat", new String[] {"ref", "refs", "count"});
         kinds.put("wrap_in_condition", new String[] {"ref", "refs", "sensor"});
         kinds.put("create_branch", new String[] {"ref", "sensor", "trueRefs", "falseRefs"});

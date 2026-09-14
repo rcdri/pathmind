@@ -1,7 +1,6 @@
 package com.pathmind.ai;
 
 import java.nio.file.Path;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -9,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class AiRequestStampTest {
     @TempDir Path directory;
-    @Test void resetRejectsLateSuccessWithoutResurrectingHistoryOrSummary() {
+    @Test void resetRejectsLateSuccessWithoutResurrectingHistory() {
         var store = new AiChatHistoryStore(directory.resolve("history.json"));
         var stamp = AiRequestStamp.capture(AiProviderType.OPENAI, 4, store);
         var pending = new CompletableFuture<String>();
@@ -18,11 +17,9 @@ class AiRequestStampTest {
             if (!stamp.isCurrent(AiProviderType.OPENAI, 4, store)) return;
             presented[0] = true;
             store.append(AiProviderType.OPENAI, AiChatHistoryStore.Role.ASSISTANT, response);
-            store.saveSummary(AiProviderType.OPENAI, new AiConversationSummary("Stale goal", List.of(), List.of()));
         });
         store.reset(AiProviderType.OPENAI); pending.complete("Old response");
         assertFalse(presented[0]); assertTrue(store.history(AiProviderType.OPENAI).isEmpty());
-        assertNull(store.summary(AiProviderType.OPENAI));
     }
     @Test void cancellationAndSwitchAwayAndBackCannotRevalidateOldCallback() {
         var store = new AiChatHistoryStore(directory.resolve("history.json"));

@@ -441,6 +441,37 @@ public final class AiPresetAgent {
             }
         }
         plan.add("assumptions", assumptions);
+        JsonArray requirements = new JsonArray();
+        java.util.Set<String> requirementKeys = new java.util.LinkedHashSet<>();
+        JsonArray rawRequirements = action.has("planRequirements") && action.get("planRequirements").isJsonArray()
+            ? action.getAsJsonArray("planRequirements") : new JsonArray();
+        if (rawRequirements.size() > 32) return ToolResult.more(error("A plan may contain at most 32 parameter requirements."));
+        for (JsonElement element : rawRequirements) {
+            if (!element.isJsonObject()) return ToolResult.more(error("Every plan requirement must be an object."));
+            JsonObject raw = element.getAsJsonObject();
+            String ref = nullableString(raw, "ref");
+            String parameterId = nullableString(raw, "parameterId");
+            String expected = nullableString(raw, "value");
+            if (ref == null || ref.isBlank() || parameterId == null || parameterId.isBlank() || expected == null) {
+                return ToolResult.more(error("Each plan requirement needs ref, nodeType, parameterId, and value."));
+            }
+            try {
+                NodeType nodeType = NodeType.valueOf(string(raw, "nodeType", "").toUpperCase(Locale.ROOT));
+                if (!containsAvailableType(state, nodeType)) return ToolResult.more(error("Required node type " + nodeType + " is unavailable."));
+                AiParameterValidator.CheckedValue checked = AiParameterValidator.validate(nodeType, null, parameterId, expected);
+                String key = ref + "|" + checked.parameterId();
+                if (!requirementKeys.add(key)) return ToolResult.more(error("Duplicate plan requirement for " + key + "."));
+                JsonObject requirement = new JsonObject();
+                requirement.addProperty("ref", ref);
+                requirement.addProperty("nodeType", nodeType.name());
+                requirement.addProperty("parameterId", checked.parameterId());
+                requirement.addProperty("value", checked.value());
+                requirements.add(requirement);
+            } catch (IllegalArgumentException exception) {
+                return ToolResult.more(codedError("invalid_plan_requirement", exception.getMessage()));
+            }
+        }
+        plan.add("requirements", requirements);
         state.plan = plan;
         state.planned = true;
         state.planRevision++;
@@ -466,7 +497,13 @@ public final class AiPresetAgent {
             ? action.getAsJsonArray("commands") : new JsonArray();
         AiGraphCommandEngine.Result mutation = AiGraphCommandEngine.apply(state.workingGraph, commands,
             state.nodeReferences, state.baritoneAvailable, state.uiUtilsAvailable);
-        if (!mutation.success()) return ToolResult.more(codedError("command_rejected", mutation.message()));
+        if (!mutation.success()) {
+            JsonObject result = codedError(mutation.errorCode(), mutation.message());
+            result.addProperty("recoverable", mutation.recoverable());
+            if (mutation.recoverable()) result.addProperty("guidance",
+                "Repair the command or inspect the relevant subgraph, then retry. This rejection does not prove the task is blocked.");
+            return ToolResult.more(result);
+        }
         try {
             parseGraph(mutation.graph());
         } catch (RuntimeException exception) {
@@ -484,6 +521,7 @@ public final class AiPresetAgent {
         result.addProperty("connectionCount", state.workingGraph.getAsJsonArray("connections").size());
         result.add("resolvedRefs", GSON.toJsonTree(state.nodeReferences));
         result.add("effects", mutation.effects());
+        result.add("actualValues", mutation.actualValues());
         return ToolResult.more(result);
     }
 
@@ -494,13 +532,16 @@ public final class AiPresetAgent {
             "Draft", "", List.of(), graph, state.target);
         AiPresetService.Validation validation = AiPresetService.validateProposal(temporary, state.activePresetName,
             state.baritoneAvailable, state.uiUtilsAvailable);
-        state.validated = validation.valid();
-        state.previewed = validation.valid();
-        state.repairRound = validation.valid() ? 0 : state.repairRound + 1;
-        if (!validation.valid()) state.validationFailures++;
+        JsonArray semanticIssues = requirementIssues(state, graph);
+        state.validated = validation.valid() && semanticIssues.isEmpty();
+        state.previewed = state.validated;
+        state.repairRound = state.validated ? 0 : state.repairRound + 1;
+        if (!state.validated) state.validationFailures++;
         JsonObject result = new JsonObject();
-        result.addProperty("ok", validation.valid());
-        result.addProperty("message", validation.valid() ? "The draft passes serialized and runtime validation." : "Repair the listed issues, then validate again.");
+        result.addProperty("ok", state.validated);
+        result.addProperty("message", state.validated
+            ? "The draft passes structural validation and matches the plan's required values."
+            : "Repair the listed structural or requirement issues, then validate again.");
         JsonArray issues = new JsonArray();
         java.util.Set<String> inspectRefs = new java.util.LinkedHashSet<>();
         java.util.Set<String> operations = new java.util.LinkedHashSet<>();
@@ -510,14 +551,74 @@ public final class AiPresetAgent {
             described.getAsJsonArray("inspectRefs").forEach(value -> inspectRefs.add(value.getAsString()));
             described.getAsJsonArray("suggestedOperations").forEach(value -> operations.add(value.getAsString()));
         });
+        for (JsonElement element : semanticIssues) {
+            JsonObject described = element.getAsJsonObject();
+            issues.add(described);
+            described.getAsJsonArray("inspectRefs").forEach(value -> inspectRefs.add(value.getAsString()));
+            described.getAsJsonArray("suggestedOperations").forEach(value -> operations.add(value.getAsString()));
+        }
         result.add("issues", issues);
         result.add("inspectRefs", GSON.toJsonTree(inspectRefs));
         result.add("suggestedRepairOperations", GSON.toJsonTree(operations));
         result.addProperty("repairRound", state.repairRound);
-        if (!validation.valid()) result.addProperty("next", "Inspect only inspectRefs if more context is needed, apply the smallest suggested repair, then validate again.");
+        if (!state.validated) result.addProperty("next", "Inspect only inspectRefs if more context is needed, apply the smallest suggested repair, then validate again.");
         result.addProperty("draftRevision", state.draftRevision);
-        if (validation.valid()) result.add("preview", AiExecutionPreview.preview(graph));
+        if (state.validated) result.add("preview", AiExecutionPreview.preview(graph));
         return ToolResult.more(result);
+    }
+
+    private static JsonArray requirementIssues(State state, NodeGraphData graph) {
+        JsonArray issues = new JsonArray();
+        if (state.plan == null || !state.plan.has("requirements") || !state.plan.get("requirements").isJsonArray()) return issues;
+        for (JsonElement element : state.plan.getAsJsonArray("requirements")) {
+            JsonObject requirement = element.getAsJsonObject();
+            String ref = requirement.get("ref").getAsString();
+            String expectedType = requirement.get("nodeType").getAsString();
+            String parameterId = requirement.get("parameterId").getAsString();
+            String expected = requirement.get("value").getAsString();
+            String nodeId = state.nodeReferences.getOrDefault(ref, ref);
+            NodeGraphData.NodeData node = graph.getNodes().stream().filter(candidate -> candidate != null
+                && nodeId.equals(candidate.getId())).findFirst().orElse(null);
+            String actual = null;
+            String code = "requirement_mismatch";
+            String message;
+            JsonArray suggested = new JsonArray();
+            if (node == null) {
+                code = "required_node_missing";
+                message = "Required " + expectedType + " node '" + ref + "' is missing.";
+                suggested.add("add_node");
+            } else if (!expectedType.equals(node.getType().name())) {
+                code = "required_node_type_mismatch";
+                message = "Node '" + ref + "' must be " + expectedType + " but is " + node.getType() + ".";
+                suggested.add("replace_subgraph");
+            } else {
+                String normalized = com.pathmind.nodes.NodeParameter.createDefaultId(parameterId);
+                NodeGraphData.ParameterData parameter = node.getParameters() == null ? null : node.getParameters().stream()
+                    .filter(candidate -> candidate != null && normalized.equals(
+                        com.pathmind.nodes.NodeParameter.createDefaultId(candidate.getId())))
+                    .findFirst().orElse(null);
+                if (parameter != null) actual = parameter.getValue();
+                if (expected.equals(actual)) continue;
+                message = "Required " + ref + "." + parameterId + " = '" + expected
+                    + "', but the draft contains '" + (actual == null ? "<missing>" : actual) + "'.";
+                suggested.add("set_parameters");
+            }
+            JsonObject issue = new JsonObject();
+            issue.addProperty("code", code);
+            issue.addProperty("message", message);
+            issue.addProperty("nodeRef", ref);
+            issue.addProperty("nodeId", nodeId);
+            issue.addProperty("expectedNodeType", expectedType);
+            issue.addProperty("parameterId", parameterId);
+            issue.addProperty("expected", expected);
+            if (actual == null) issue.add("actual", null); else issue.addProperty("actual", actual);
+            issue.add("suggestedOperations", suggested);
+            JsonArray inspect = new JsonArray();
+            inspect.add(ref);
+            issue.add("inspectRefs", inspect);
+            issues.add(issue);
+        }
+        return issues;
     }
 
     private static ToolResult previewExecution(State state) {
@@ -541,8 +642,8 @@ public final class AiPresetAgent {
             if ("blocked".equals(completion)) {
                 Integer blockingTurn = nullableInteger(action, "blockingToolTurn");
                 boolean confirmed = blockingTurn != null && state.trace.stream().anyMatch(step -> step.turn() == blockingTurn && !step.success()
-                    && (step.tool().equals("validate_graph") || List.of("context_unavailable", "capability_unavailable", "command_rejected").contains(step.code())));
-                if (!confirmed) return ToolResult.more(codedError("unconfirmed_blocker", "A blocker must cite blockingToolTurn from a real failed context/capability/command/validation tool result. Inspection or permission selection is not a blocker; recover or ask clarification."));
+                    && (step.tool().equals("validate_graph") || List.of("context_unavailable", "capability_unavailable").contains(step.code())));
+                if (!confirmed) return ToolResult.more(codedError("unconfirmed_blocker", "A blocker must cite blockingToolTurn from a real failed context/capability/validation result. A rejected graph command is recoverable and does not establish inability; inspect or repair and retry."));
             }
             return ToolResult.done(proposal(state, action, null, "inspect"));
         }
@@ -577,7 +678,6 @@ public final class AiPresetAgent {
         AiCompletionOutcome outcome = graph != null ? AiCompletionOutcome.PROPOSAL
             : state.intent == AiRequestIntent.CLARIFY || completion.equals("clarification") ? AiCompletionOutcome.CLARIFICATION
             : completion.equals("blocked") ? AiCompletionOutcome.BLOCKED : AiCompletionOutcome.ANSWER;
-        state.control.summary(AiConversationSummary.fromAction(action));
         return new AiPresetService.Proposal(title, response, List.copyOf(workLog), graph, target,
             sourceFingerprint, review, outcome);
     }
@@ -652,9 +752,9 @@ public final class AiPresetAgent {
             + "Available tools: inspect_preset returns the exact open graph and draft; list_node_types lists creatable types; describe_node_types accepts nodeTypes and returns exact sockets, modes, parameters, attachment contracts, and relevant examples; "
             + "list_examples returns a compact index or ranks at most four examples by nodeTypes and exampleTraits; inspect_example returns one exact serialized example. Retrieve examples only for unfamiliar or structurally relevant concepts; do not inspect unrelated examples. "
             + "find_nodes searches the draft by type or text and inspect_subgraph returns only a bounded neighborhood; use these instead of repeatedly requesting the complete preset. plan_graph records a short structural plan and is required before the first edit to a new or current graph. "
-            + "apply_graph_commands mutates the isolated draft. Primitive commands are add_node, set_mode, set_parameter, connect, disconnect, attach_action, attach_sensor, attach_parameter, detach_action, detach_sensor, detach_parameter, and remove_node. Composition commands are add_sequence, wrap_in_repeat, wrap_in_condition, create_branch, declare_variable, declare_list, clone_subgraph, replace_subgraph, create_routine, add_routine_call, and auto_layout. Pathmind owns real node IDs, defaults, serialization, rewiring, routine identities, and bidirectional attachment fields. validate_graph runs Pathmind's real validators; preview_execution returns bounded structural paths; finish returns the reviewed result. "
-            + "For add_node choose a short ref and nodeType. Later commands use that ref; Pathmind returns resolvedRefs with generated IDs. set_mode and set_parameter use ref. connect uses from, to, outputSocket, and inputSocket. Attachments use host and child; attach_parameter also uses slotIndex. Set fields unused by a command to null. Every command batch must include the latest draftRevision from a tool result. "
-            + "Before editing, call plan_graph once with an outcome-focused goal, 1-8 structural steps, relevant node types and structures, and only necessary assumptions. This is a concise architecture plan, not hidden reasoning. Use add_sequence for ordered nodeTypes plus matching refs. Wrappers accept one ordered connected refs selection; wrap_in_repeat also needs count and wrap_in_condition needs an existing sensor ref. create_branch accepts a sensor plus ordered trueRefs and falseRefs. clone_subgraph maps refs to newRefs; replace_subgraph rewires one-entry/one-exit refs to replacementRefs. create_routine extracts ordered refs into a definition, creates a call at their old location, and accepts typed routineInputs; an input can set bindToRef plus slotIndex to create and attach a typed reporter inside the routine body. add_routine_call reuses its routineRef, and attach_parameter supplies call arguments. End substantial construction with auto_layout. "
+            + "apply_graph_commands mutates the isolated draft. Primitive commands are add_node, set_mode, set_parameter, set_parameters, connect, disconnect, attach_action, attach_sensor, attach_parameter, detach_action, detach_sensor, detach_parameter, and remove_node. Composition commands are add_sequence, insert_sequence_after, wrap_in_repeat, wrap_in_condition, create_branch, declare_variable, declare_list, clone_subgraph, replace_subgraph, create_routine, add_routine_call, and auto_layout. Pathmind owns real node IDs, typed values, defaults, serialization, rewiring, routine identities, and bidirectional attachment fields. validate_graph runs Pathmind's real validators and checks the finished graph against planRequirements; preview_execution returns bounded structural paths; finish returns the reviewed result. "
+            + "For add_node choose a short ref and nodeType. Later commands use that ref; Pathmind returns resolvedRefs with generated IDs. Prefer set_parameters for configured nodes so related values are validated and applied atomically; Craft requires Item and Amount together. Never combine a quantity with an identifier. Read actualValues after every patch instead of assuming values were accepted. connect uses from, to, outputSocket, and inputSocket. Attachments use host and child; attach_parameter also uses slotIndex. Set fields unused by a command to null. Every command batch must include the latest draftRevision from a tool result. "
+            + "Before editing, call plan_graph once with an outcome-focused goal, 1-8 structural steps, relevant node types and structures, only necessary assumptions, and one planRequirements entry for every explicit behavior-shaping value in the user's request. Requirements name the intended ref, nodeType, exact parameterId, and one typed value; for 'craft 4 oak planks', record separate Craft item=minecraft:oak_planks and amount=4 requirements. This is a concise architecture plan, not hidden reasoning. Use add_sequence for a new chain. Use insert_sequence_after with an anchor ref, outputSocket, ordered nodeTypes, and matching refs when adding behavior after an existing node; it atomically preserves the old successor. An occupied socket is a recoverable editing conflict: inspect or use the splice command, never finish blocked because of it. Wrappers accept one ordered connected refs selection; wrap_in_repeat also needs count and wrap_in_condition needs an existing sensor ref. create_branch accepts a sensor plus ordered trueRefs and falseRefs. clone_subgraph maps refs to newRefs; replace_subgraph rewires one-entry/one-exit refs to replacementRefs. create_routine extracts ordered refs into a definition, creates a call at their old location, and accepts typed routineInputs; an input can set bindToRef plus slotIndex to create and attach a typed reporter inside the routine body. add_routine_call reuses its routineRef, and attach_parameter supplies call arguments. End substantial construction with auto_layout. "
             + "Validation issues include expected structure, actual state, related nodes, suggested semantic operations, and focused inspectRefs. Repair only the reported relationship, then validate again; use disconnect or detach commands before replacing occupied relationships. "
             + "Use the supplied node index instead of calling list_node_types unless the index is insufficient. Inspect all relevant contracts in one batched call. Prefer one coherent command batch when possible. After commands, validate and repair every error. Successful validation includes preview_execution output, so finish immediately unless repair is needed. "
             + "Never claim a tool succeeded until its result says ok. Do not reveal hidden reasoning; workLog contains only concise user-visible actions. "
@@ -680,9 +780,9 @@ public final class AiPresetAgent {
             + "Do not escalate discussion/diagnosis into edits. 'What do you think?' calls for an answer; 'after it jumps, create a variable...' calls for an edit even if inspecting is your first action. Judge intent semantically, never use prompt-to-graph templates. "
             + "Discussion may finish without preset inspection. Diagnose an open preset only after inspection. Build/edit must return actual draft edits validated for review, not instructions for the user to implement. "
             + "Reuse tool results while the draft revision is unchanged. A repeated read, assessment, or failed finish is not progress. When a tool fails, use its error to change the arguments or satisfy the missing prerequisite; do not retry the identical call. A valid unchanged draft needs finish, not another validation or preview. "
-            + "Prefer progress over clarification when the requested outcome is clear. Use fresh workspace selection, relevant node contracts, existing preset settings, explicit preferences, and safe node defaults to resolve implementation details. Record reasonable assumptions in planAssumptions and mention important ones in the review. "
+            + "Prefer progress over clarification when the requested outcome is clear. Use fresh workspace selection, relevant node contracts, existing preset settings, earlier user messages, and safe node defaults to resolve implementation details. Record reasonable assumptions in planAssumptions and mention important ones in the review. "
             + "Ask one narrow question only when missing information materially changes the requested behavior or graph target and cannot be resolved from available context. Do not ask about node wiring, layout, variable names, routine names, or other reversible implementation choices. Do not silently change requested units or invent unsupported behavior. A request such as 'extend this preset' needs clarification only if neither the latest message nor earlier user context specifies the intended outcome. "
-            + "Before asking, check USER_REQUEST, conversation messages, olderUserMessages, summary decisions, explicit preferences, and workspace facts for an existing answer. User statements resolve requirements; assistant questions or suggestions do not establish user decisions. Newer user corrections supersede older answers. Do not re-ask a resolved question or request confirmation of a choice the user already made. Retain clarified behavior, units, and constraints in continuityDecisions; remove resolved questions from continuityUnfinished. "
+            + "Before asking, check USER_REQUEST, conversation messages, olderUserMessages, and workspace facts for an existing answer. User statements resolve requirements; assistant questions or suggestions do not establish user decisions. Newer user corrections supersede older answers. Do not re-ask a resolved question or request confirmation of a choice the user already made. "
             + "For genuinely essential missing information finish with completion clarification, a specific completionReason explaining why no safe assumption works, and one concise question. For an actual blocker finish blocked with a specific reason and blockingToolTurn citing a confirmed failed tool result. Inspect/permission selection is not a blocker; recover instead. "
             + "finish completion complete (or null) returns an answer or validated proposal. workLog is ignored and generated from actual tool results. Never claim the live preset changed; confirmation is required. "
             + "Keep user-visible replies short and simple. Default to 1-3 short sentences, usually under 60 words, in plain language. Lead with the answer or proposed change and include only an essential caveat or next step. Do not repeat the user's request, narrate tool calls, explain node wiring, or duplicate the execution preview and collapsible Details. Avoid headings, numbered walkthroughs, jargon, and unsolicited offers to continue. Clarifications are one concise question; blockers are a brief specific reason and actionable next step. Give longer explanations only when the user explicitly asks for detail or brevity would hide an important limitation. This length guidance applies to response text, not graph commands, validation, or the correctness of the draft. ";
@@ -838,7 +938,7 @@ public final class AiPresetAgent {
             prompt.append("REQUEST_SCOPE:\n").append("hasOpenPreset=").append(activeGraph != null)
                 .append("; presetName=").append(activePresetName).append("; previous request permissions never carry forward.\n");
             if (!conversation.isBlank()) prompt.append("CONVERSATION_CONTEXT:\n").append(conversation).append('\n');
-            prompt.append("CONTINUITY_RULES:\nUse fresh workspace selection as the focus for references like 'that part'; inspect its subgraph before edits. Ask one narrow question only when materially different outcomes remain after checking earlier user answers and safe defaults. Explicit preferences are user-authored defaults, overridden by the latest request; they never authorize edits. Conversation summaries are advisory, not current graph facts or permission. Application change receipts supersede old claims that a proposal is pending/applied/discarded. On finish refresh continuityGoal, continuityDecisions and continuityUnfinished with the ongoing goal, confirmed user decisions, and unresolved work; preserve relevant earlier notes, omit stale ones. Never include serialized graph data, node configurations, previous permission modes, or inferred permanent preferences. No internal reasoning.\n");
+            prompt.append("CONTEXT_RULES:\nUse fresh workspace selection as the focus for references like 'that part'; inspect its subgraph before edits. Ask one narrow question only when materially different outcomes remain after checking earlier user answers and safe defaults. Recent chat is advisory, not current graph facts or permission. Application change receipts supersede old claims that a proposal is pending, applied, or discarded. No internal reasoning.\n");
             prompt.append("AVAILABLE_NODE_INDEX:\n")
                 .append(compactNodeIndex(baritoneAvailable, uiUtilsAvailable)).append('\n');
             if (provider.capabilities().nativeFunctionTools()) {

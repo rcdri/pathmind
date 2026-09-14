@@ -54,6 +54,52 @@ class AiGraphCommandEngineTest {
     }
 
     @Test
+    void craftParametersAreTypedAtomicAndReadBackFromTheActualDraft() {
+        JsonArray commands = new JsonArray();
+        commands.add(command("add_node", "ref", "craft", "nodeType", "CRAFT"));
+        JsonObject values = command("set_parameters", "ref", "craft");
+        values.add("parameterValues", parameterValues("Item", "minecraft:oak_planks", "Amount", "4"));
+        commands.add(values);
+
+        AiGraphCommandEngine.Result result = AiGraphCommandEngine.apply(emptyGraph(), commands, Map.of(), true, true);
+
+        assertTrue(result.success(), result.message());
+        JsonObject craft = findNode(result.graph(), result.references().get("craft"));
+        assertEquals("minecraft:oak_planks", parameter(craft, "item").get("value").getAsString());
+        assertEquals("4", parameter(craft, "amount").get("value").getAsString());
+        JsonObject readback = result.actualValues().get(0).getAsJsonObject();
+        assertEquals("CRAFT", readback.get("nodeType").getAsString());
+        assertTrue(readback.toString().contains("minecraft:oak_planks"));
+        assertTrue(readback.toString().contains("\"value\":\"4\""));
+    }
+
+    @Test
+    void malformedCraftItemAndPartialCraftUpdatesAreRejected() {
+        JsonArray malformed = new JsonArray();
+        malformed.add(command("add_node", "ref", "craft", "nodeType", "CRAFT"));
+        JsonObject badValues = command("set_parameters", "ref", "craft");
+        badValues.add("parameterValues", parameterValues("Item", "minecraft:oak_planks,4", "Amount", "4"));
+        malformed.add(badValues);
+
+        AiGraphCommandEngine.Result malformedResult = AiGraphCommandEngine.apply(
+            emptyGraph(), malformed, Map.of(), true, true);
+
+        assertFalse(malformedResult.success());
+        assertEquals("invalid_parameter_value", malformedResult.errorCode());
+        assertTrue(malformedResult.message().contains("one item identifier"));
+
+        JsonArray partial = new JsonArray();
+        partial.add(command("add_node", "ref", "craft", "nodeType", "CRAFT"));
+        JsonObject partialValues = command("set_parameters", "ref", "craft");
+        partialValues.add("parameterValues", parameterValues("Item", "minecraft:oak_planks"));
+        partial.add(partialValues);
+        AiGraphCommandEngine.Result partialResult = AiGraphCommandEngine.apply(
+            emptyGraph(), partial, Map.of(), true, true);
+        assertFalse(partialResult.success());
+        assertEquals("incomplete_parameter_group", partialResult.errorCode());
+    }
+
+    @Test
     void attachmentCommandsCreateBothSidesOfTheRelationship() {
         JsonArray commands = new JsonArray();
         commands.add(command("add_node", "ref", "start", "nodeType", "START"));
@@ -175,6 +221,55 @@ class AiGraphCommandEngineTest {
         assertTrue(hasConnection(result.graph(), result.references().get("wait"), result.references().get("jump"), 0));
         assertFalse(hasConnection(result.graph(), result.references().get("start"), result.references().get("wait"), 0));
         assertTrue(AiGraphIntegrityValidator.validate(parse(result.graph()), true, true).isEmpty());
+    }
+
+    @Test
+    void insertsASequenceAfterAConnectedNodeAndPreservesItsSuccessor() {
+        JsonArray build = new JsonArray();
+        build.add(arrayCommand("add_sequence", "refs", "start", "jump", "after",
+            "nodeTypes", "START", "JUMP", "MESSAGE"));
+        AiGraphCommandEngine.Result initial = AiGraphCommandEngine.apply(emptyGraph(), build, Map.of(), true, true);
+        JsonObject splice = arrayCommand("insert_sequence_after", "refs", "inventory", "craft",
+            "nodeTypes", "OPEN_INVENTORY", "CRAFT");
+        splice.addProperty("ref", "jump");
+        splice.addProperty("outputSocket", 0);
+        JsonArray commands = new JsonArray();
+        commands.add(splice);
+
+        AiGraphCommandEngine.Result result = AiGraphCommandEngine.apply(initial.graph(), commands,
+            initial.references(), true, true);
+
+        assertTrue(result.success(), result.message());
+        String jump = result.references().get("jump");
+        String inventory = result.references().get("inventory");
+        String craft = result.references().get("craft");
+        String after = result.references().get("after");
+        assertFalse(hasConnection(result.graph(), jump, after, 0));
+        assertTrue(hasConnection(result.graph(), jump, inventory, 0));
+        assertTrue(hasConnection(result.graph(), inventory, craft, 0));
+        assertTrue(hasConnection(result.graph(), craft, after, 0));
+        assertTrue(AiGraphIntegrityValidator.validate(parse(result.graph()), true, true).isEmpty());
+    }
+
+    @Test
+    void occupiedOutputReportsTheCurrentDestinationAndIsRecoverable() {
+        JsonArray build = new JsonArray();
+        build.add(arrayCommand("add_sequence", "refs", "start", "jump",
+            "nodeTypes", "START", "JUMP"));
+        AiGraphCommandEngine.Result initial = AiGraphCommandEngine.apply(emptyGraph(), build, Map.of(), true, true);
+        JsonArray commands = new JsonArray();
+        commands.add(command("add_node", "ref", "wait", "nodeType", "WAIT"));
+        commands.add(command("connect", "from", "start", "to", "wait", "outputSocket", 0, "inputSocket", 0));
+
+        AiGraphCommandEngine.Result result = AiGraphCommandEngine.apply(initial.graph(), commands,
+            initial.references(), true, true);
+
+        assertFalse(result.success());
+        assertEquals("occupied_output", result.errorCode());
+        assertTrue(result.recoverable());
+        assertTrue(result.message().contains("JUMP 'jump' input socket 0"), result.message());
+        assertTrue(result.message().contains("insert_sequence_after"), result.message());
+        assertEquals(2, initial.graph().getAsJsonArray("nodes").size());
     }
 
     @Test
@@ -329,6 +424,22 @@ class AiGraphCommandEngineTest {
         JsonArray result = new JsonArray();
         for (String value : values) result.add(value);
         return result;
+    }
+
+    private static JsonArray parameterValues(String... fields) {
+        JsonArray values = new JsonArray();
+        for (int index = 0; index < fields.length; index += 2) {
+            values.add(command("value", "parameterId", fields[index], "value", fields[index + 1]));
+        }
+        return values;
+    }
+
+    private static JsonObject parameter(JsonObject node, String id) {
+        for (var element : node.getAsJsonArray("parameters")) {
+            JsonObject parameter = element.getAsJsonObject();
+            if (id.equals(parameter.get("id").getAsString())) return parameter;
+        }
+        throw new AssertionError("Missing parameter " + id);
     }
 
     private static boolean hasConnection(JsonObject graph, String from, String to, int outputSocket) {
