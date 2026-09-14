@@ -19,8 +19,15 @@ public record AiConversationSummary(String goal, List<String> decisions, List<St
         return values.stream().map(AiConversationSummary::bounded).filter(v -> !v.isBlank()).toList();
     }
     public static AiConversationSummary fromAction(JsonObject action) {
-        if (!action.has("continuityGoal") || action.get("continuityGoal").isJsonNull()) return null;
-        return new AiConversationSummary(action.get("continuityGoal").getAsString(), items(action, "continuityDecisions"), items(action, "continuityUnfinished"));
+        if (!action.has("continuityGoal") && !action.has("continuityDecisions") && !action.has("continuityUnfinished")) return null;
+        String goal = !action.has("continuityGoal") || action.get("continuityGoal").isJsonNull()
+            ? "" : action.get("continuityGoal").getAsString();
+        return new AiConversationSummary(goal, items(action, "continuityDecisions"), items(action, "continuityUnfinished"));
+    }
+    public static AiConversationSummary merge(AiConversationSummary previous, AiConversationSummary update) {
+        if (update == null) return previous;
+        String goal = update.goal().isBlank() && previous != null ? previous.goal() : update.goal();
+        return new AiConversationSummary(goal, update.decisions(), update.unfinished());
     }
     private static List<String> items(JsonObject action, String key) {
         if (!action.has(key) || action.get(key).isJsonNull()) return List.of();

@@ -78,6 +78,11 @@ final class AiNativeProviderSession implements AiProviderSession {
             body.addProperty("parallel_tool_calls", false);
             body.addProperty("tool_choice", "required");
             body.addProperty("prompt_cache_key", "pathmind-graph-tools-v5");
+            if (request.model().startsWith("gpt-5.4") || request.model().startsWith("gpt-5.5")) {
+                JsonObject text = new JsonObject();
+                text.addProperty("verbosity", "low");
+                body.add("text", text);
+            }
             JsonArray include = new JsonArray();
             include.add("reasoning.encrypted_content");
             body.add("include", include);

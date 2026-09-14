@@ -10,7 +10,7 @@ graders, **not** model tool selection quality or real Minecraft movement.
 The exact reported prompt is reproduced from a stable Start → south-facing five-second
 Walk → Jump fixture. A scripted agent inspects, recovers from a premature inspect-mode
 finish, plans, adds a saved Self XYZ/five-block forward walk/pathfinding return, validates,
-and produces a complete multiline proposal without changing the source fixture.
+and produces a concise proposal without changing the source fixture.
 Valid-but-wrong seconds, return-variable, and capture-order graphs fail behavior grading.
 Other tests cover discussion vs implementation, clarification, cancelled/late responses,
 reset/provider-switch callback rejection, discarded/unaccepted proposals, long messages,
@@ -18,7 +18,7 @@ and continuity subordinate to fresh graph state.
 
 ```sh
 ./gradlew test
-./gradlew :common:aiEval -PaiEvalDifficulty=regression -PaiEvalLimit=6
+./gradlew :common:aiEval -PaiEvalDifficulty=regression -PaiEvalLimit=7
 ```
 
 JUnit results are in `common/build/reports/tests/test/index.html` and
@@ -34,7 +34,7 @@ and choose a model explicitly; don't paste keys in chat. Live calls incur charge
 ```sh
 ./gradlew :common:aiEval -PaiEvalLive=true -PaiEvalProvider=OPENAI \
   -PaiEvalModel=YOUR_MODEL -PaiEvalDifficulty=regression \
-  -PaiEvalLimit=6 -PaiEvalRepeats=1
+  -PaiEvalLimit=7 -PaiEvalRepeats=1
 ```
 
 Start small, then repeat with `-PaiEvalRepeats=3` across matched providers/models.

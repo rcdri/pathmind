@@ -40,5 +40,11 @@
     "prompt":"What do you think about the current graph? Only discuss it.",
     "context":{"messages":[{"role":"user","text":"Implement a saved-position return after the jump."},{"role":"event","text":"That previous request had edit permission. It ended with a discarded proposal."}]},
     "expected":{"outcome":"ANSWER"}
+  },
+  {
+    "id":"lifecycle-clarification-resolved","difficulty":"regression","target":"current","fixture":"reported-walk-jump",
+    "prompt":"Yes—five blocks. Continue with that.",
+    "context":{"messages":[{"role":"user","text":"After Jump, save my current position, move forward, then return there with pathfinding."},{"role":"assistant","text":"Should the movement be measured in blocks or seconds?"}]},
+    "expected":{"outcome":"PROPOSAL","preserveFixture":true,"requiredNodes":{"START":1,"JUMP":1,"SET_VARIABLE":1,"SENSOR_POSITION_OF":1,"WALK":2,"PARAM_DISTANCE":1,"GOTO":1},"maxNodes":15,"parameters":[{"type":"PARAM_DISTANCE","name":"Distance","value":"5"}],"sequences":[["JUMP","SET_VARIABLE","WALK","GOTO"]]}
   }
 ]

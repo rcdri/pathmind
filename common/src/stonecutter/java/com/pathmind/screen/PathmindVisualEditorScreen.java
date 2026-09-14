@@ -3485,18 +3485,14 @@ public class PathmindVisualEditorScreen extends Screen {
         if (created.isEmpty()) {
             return "Error: could not create the generated preset.";
         }
-        // Make the new preset visible first; the generated graph is then written into this open preset.
+        if (!NodeGraphPersistence.saveNodeGraphDataForPreset(created.get(), proposal.graph())) {
+            boolean removed = PresetManager.deletePreset(created.get());
+            refreshAvailablePresets();
+            return "Error: could not write the generated graph." + (removed ? " No preset was created." : " The empty preset could not be removed.");
+        }
+        // Only expose and activate the preset after its validated graph has been written.
         refreshAvailablePresets();
         switchPreset(created.get());
-        if (!NodeGraphPersistence.saveNodeGraphDataForPreset(created.get(), proposal.graph())) {
-            return "Error: created " + created.get() + ", but could not write the generated graph.";
-        }
-        // The preset is already active. Switching again would save the still-empty in-memory
-        // workspace over the generated file, so apply the saved graph directly instead.
-        if (!nodeGraph.applyGraphDataSnapshot(proposal.graph(), false)) {
-            return "Error: created " + created.get() + ", but could not open the generated graph.";
-        }
-        resetWorkspaceTabsFromCurrentGraph();
         return "Created " + created.get() + ".";
     }
 

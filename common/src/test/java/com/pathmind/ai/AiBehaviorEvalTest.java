@@ -9,18 +9,18 @@ import static org.junit.jupiter.api.Assertions.*;
 class AiBehaviorEvalTest {
     @Test void liveSelectionRejectsTyposAndSupportsExactWorkflowSamples() {
         var cases = AiBehaviorEvalCase.load();
-        assertEquals(6, AiBehaviorEvalRunner.select(cases, "regression", "", 66).size());
+        assertEquals(7, AiBehaviorEvalRunner.select(cases, "regression", "", 67).size());
         var selected = AiBehaviorEvalRunner.select(cases, "", "lifecycle-position-return", 1);
         assertEquals("lifecycle-position-return", selected.getFirst().id());
         assertThrows(IllegalArgumentException.class, () -> AiBehaviorEvalRunner.select(cases, "", "typo", 1));
         assertThrows(IllegalArgumentException.class, () -> AiBehaviorEvalRunner.select(cases, "unrecognized", "", 1));
     }
-    @Test void corpusHasSixtySixUniqueRequestsAndValidFixtures() {
+    @Test void corpusHasSixtySevenUniqueRequestsAndValidFixtures() {
         var cases = AiBehaviorEvalCase.load();
-        assertEquals(66, cases.size());
-        assertEquals(66, cases.stream().map(AiBehaviorEvalCase::id).distinct().count());
-        assertEquals(66, cases.stream().map(AiBehaviorEvalCase::prompt).distinct().count());
-        assertEquals(6, cases.stream().filter(test -> test.difficulty().equals("regression")).count());
+        assertEquals(67, cases.size());
+        assertEquals(67, cases.stream().map(AiBehaviorEvalCase::id).distinct().count());
+        assertEquals(67, cases.stream().map(AiBehaviorEvalCase::prompt).distinct().count());
+        assertEquals(7, cases.stream().filter(test -> test.difficulty().equals("regression")).count());
         for (String difficulty : List.of("simple", "medium", "complex"))
             assertEquals(20, cases.stream().filter(test -> test.difficulty().equals(difficulty)).count());
         for (var test : cases) {
@@ -61,5 +61,14 @@ class AiBehaviorEvalTest {
         var grade = AiBehaviorEvalGrader.grade(test, proposal);
         assertTrue(grade.validationPassed());
         assertFalse(grade.behaviorPresent());
+    }
+
+    @Test void ordinaryResponsesAreGradedForConcisenessButRequestedLongAnswersAreAllowed() {
+        var inspect = AiBehaviorEvalCase.load().stream().filter(item -> item.id().equals("lifecycle-discuss-not-edit")).findFirst().orElseThrow();
+        var longReply = new AiPresetService.Proposal("Answer", "x".repeat(700), List.of(), null, "inspect");
+        assertFalse(AiBehaviorEvalGrader.grade(inspect, longReply).behaviorPresent());
+        var detailed = AiBehaviorEvalCase.load().stream().filter(item -> item.id().equals("lifecycle-long-answer")).findFirst().orElseThrow();
+        var requestedReply = new AiPresetService.Proposal("Answer", "seconds and blocks " + "x".repeat(700), List.of(), null, "inspect");
+        assertTrue(AiBehaviorEvalGrader.grade(detailed, requestedReply).behaviorPresent());
     }
 }

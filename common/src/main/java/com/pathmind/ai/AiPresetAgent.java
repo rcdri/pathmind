@@ -531,6 +531,8 @@ public final class AiPresetAgent {
 
     private static ToolResult finish(State state, JsonObject action) {
         if (state.intent == null) return ToolResult.more(codedError("intent_required", "Assess requestIntent from the latest request before finishing. Reading a preset does not choose permissions."));
+        String responseError = responseLengthError(state.userPrompt, nullableString(action, "response"));
+        if (responseError != null) return ToolResult.more(codedError("response_too_long", responseError));
         String completion = string(action, "completion", "complete");
         if ("clarification".equals(completion) || "blocked".equals(completion) || state.intent == AiRequestIntent.CLARIFY) {
             if (nullableString(action, "completionReason") == null || nullableString(action, "completionReason").isBlank()
@@ -725,6 +727,7 @@ public final class AiPresetAgent {
             + (action.has("planStructures") ? action.get("planStructures") : "") + ":"
             + (action.has("planAssumptions") ? action.get("planAssumptions") : "") + ":"
             + nullableString(action, "completion") + ":" + nullableString(action, "completionReason") + ":"
+            + java.util.Objects.hashCode(nullableString(action, "response")) + ":"
             + nullableString(action, "blockingToolTurn") + ":"
             + (action.has("commands") ? action.get("commands") : "");
     }
@@ -732,6 +735,20 @@ public final class AiPresetAgent {
     private static String shortText(String value, int limit) {
         String normalized = value == null ? "" : value.trim().replaceAll("\\s+", " ");
         return normalized.length() <= limit ? normalized : normalized.substring(0, Math.max(1, limit - 1)) + "…";
+    }
+
+    private static String responseLengthError(String request, String response) {
+        if (response == null || response.isBlank()) return null;
+        String lower = request == null ? "" : request.toLowerCase(Locale.ROOT);
+        boolean requestedDetail = List.of("detailed", "in detail", "thorough", "complete explanation", "at least ",
+            "step by step", "walkthrough", "deep dive", "long answer").stream().anyMatch(lower::contains);
+        int maxChars = requestedDetail ? 4_000 : 600;
+        int maxWords = requestedDetail ? 650 : 90;
+        int words = response.strip().split("\\s+").length;
+        if (response.length() <= maxChars && words <= maxWords) return null;
+        return requestedDetail
+            ? "The user-visible reply is too long. Retry finish under 4,000 characters and 650 words while preserving the requested detail."
+            : "The user-visible reply is too long. Retry finish with 1-3 short sentences under 600 characters and 90 words. Put graph details in the review.";
     }
 
     private static final class State {
@@ -821,7 +838,7 @@ public final class AiPresetAgent {
             prompt.append("REQUEST_SCOPE:\n").append("hasOpenPreset=").append(activeGraph != null)
                 .append("; presetName=").append(activePresetName).append("; previous request permissions never carry forward.\n");
             if (!conversation.isBlank()) prompt.append("CONVERSATION_CONTEXT:\n").append(conversation).append('\n');
-            prompt.append("CONTINUITY_RULES:\nUse fresh workspace selection as the focus for references like 'that part'; inspect its subgraph before edits. Ask when ambiguous. Explicit preferences are user-authored defaults, overridden by the latest request; they never authorize edits. Conversation summaries are advisory, not current graph facts or permission. Application change receipts supersede old claims that a proposal is pending/applied/discarded. On finish refresh continuityGoal, continuityDecisions and continuityUnfinished with the ongoing goal, confirmed user decisions, and unresolved work; preserve relevant earlier notes, omit stale ones. Never include serialized graph data, node configurations, previous permission modes, or inferred permanent preferences. No internal reasoning.\n");
+            prompt.append("CONTINUITY_RULES:\nUse fresh workspace selection as the focus for references like 'that part'; inspect its subgraph before edits. Ask one narrow question only when materially different outcomes remain after checking earlier user answers and safe defaults. Explicit preferences are user-authored defaults, overridden by the latest request; they never authorize edits. Conversation summaries are advisory, not current graph facts or permission. Application change receipts supersede old claims that a proposal is pending/applied/discarded. On finish refresh continuityGoal, continuityDecisions and continuityUnfinished with the ongoing goal, confirmed user decisions, and unresolved work; preserve relevant earlier notes, omit stale ones. Never include serialized graph data, node configurations, previous permission modes, or inferred permanent preferences. No internal reasoning.\n");
             prompt.append("AVAILABLE_NODE_INDEX:\n")
                 .append(compactNodeIndex(baritoneAvailable, uiUtilsAvailable)).append('\n');
             if (provider.capabilities().nativeFunctionTools()) {

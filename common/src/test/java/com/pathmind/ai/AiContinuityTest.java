@@ -34,6 +34,19 @@ class AiContinuityTest {
         reset.savePreferences(""); assertEquals("", new AiChatHistoryStore(file).preferences());
     }
 
+    @Test void nullGoalPreservesGoalWhileUpdatingResolvedDecisionsAndQuestions() {
+        var store = new AiChatHistoryStore(directory.resolve("merge.json"));
+        store.saveSummary(AiProviderType.OPENAI, new AiConversationSummary("Build a return path",
+            List.of("Distance is unresolved"), List.of("Ask whether distance means blocks or seconds")));
+        var action = JsonParser.parseString("""
+            {"continuityGoal":null,"continuityDecisions":["Use five blocks"],"continuityUnfinished":[]}
+            """).getAsJsonObject();
+        store.saveSummary(AiProviderType.OPENAI, AiConversationSummary.fromAction(action));
+        assertEquals("Build a return path", store.summary(AiProviderType.OPENAI).goal());
+        assertEquals(List.of("Use five blocks"), store.summary(AiProviderType.OPENAI).decisions());
+        assertTrue(store.summary(AiProviderType.OPENAI).unfinished().isEmpty());
+    }
+
     @Test void appliedAndDiscardedReceiptsAreNotInferredFromAssistantClaims() {
         var store = new AiChatHistoryStore(directory.resolve("history.json"));
         store.append(AiProviderType.OPENAI, AiChatHistoryStore.Role.ASSISTANT, "I applied this already");

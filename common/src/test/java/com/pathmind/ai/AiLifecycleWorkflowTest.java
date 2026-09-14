@@ -17,7 +17,7 @@ class AiLifecycleWorkflowTest {
     private static AiBehaviorEvalCase workflow() {
         return AiBehaviorEvalCase.load().stream().filter(c -> c.id().equals("lifecycle-position-return")).findFirst().orElseThrow();
     }
-    @Test void exactWorkflowRecoversFromInspectScopeAndPreservesOriginalGraphWithCompleteAnswer() {
+    @Test void exactWorkflowRecoversFromInspectScopeAndPreservesOriginalGraphWithConciseAnswer() {
         var test = workflow(); var original = test.activeGraph();
         String before = new Gson().toJson(original);
         var inspect = action("inspect_preset", "inspect");
@@ -27,7 +27,7 @@ class AiLifecycleWorkflowTest {
         plan.add("planSteps", JsonParser.parseString("[\"Capture Self position after Jump\",\"Walk forward five blocks\",\"Go to the same saved variable\"]"));
         var patch = action("apply_graph_commands", "current"); patch.addProperty("draftRevision", 0); patch.add("commands", AiReportedWorkflowFixture.extension());
         var finish = action("finish", "current");
-        String response = "I preserved your existing walk and jump.\n\n- Save your position after the jump.\n- Walk forward five blocks, not five seconds.\n- Return with pathfinding.\n\n" + "This is a proposal awaiting your review, not an applied change. ".repeat(10);
+        String response = "I preserved the existing chain and proposed saving your position after Jump, walking five blocks, then returning there with pathfinding. Review the graph before applying it.";
         finish.addProperty("response", response);
         var actions = new ArrayDeque<JsonObject>(List.of(inspect, assess, prematureFinish, plan, patch, action("validate_graph", "current"), finish));
         List<AiPresetRequest> requests = new ArrayList<>();
@@ -40,6 +40,7 @@ class AiLifecycleWorkflowTest {
         assertTrue(grade.passed(), grade.failures().toString());
         assertEquals(before, new Gson().toJson(original), "Draft edits must not mutate the real fixture");
         assertEquals(response.strip(), run.proposal().response());
+        assertTrue(run.proposal().response().length() <= 600);
         assertTrue(run.trace().stream().anyMatch(t -> !t.success() && t.code().equals("proposal_required")));
         for (var stage : List.of(AiRequestProgress.Stage.INSPECTING, AiRequestProgress.Stage.PLANNING, AiRequestProgress.Stage.BUILDING, AiRequestProgress.Stage.VALIDATING, AiRequestProgress.Stage.AWAITING_REVIEW))
             assertTrue(progress.stream().anyMatch(p -> p.stage() == stage), stage.toString());

@@ -1,6 +1,6 @@
 # AI evaluation and provider sessions
 
-The versioned corpus has 66 requests: 20 simple, 20 medium, 20 complex, and six
+The versioned corpus has 67 requests: 20 simple, 20 medium, 20 complex, and seven
 lifecycle regressions for the reported workflow and conversation/context risks.
 It covers actions, repeats, conditions, branches, fork/join, parameter cards,
 variables/lists, routines/arguments, current-preset editing, and inspection.
@@ -25,7 +25,7 @@ The harness does not read the player's encrypted keys. Set a model explicitly:
 
 Provider values: `OPENAI`, `ANTHROPIC`, `GEMINI`, `OPENAI_COMPATIBLE`.
 Optional `-PaiEvalDifficulty=simple|medium|complex|regression` filters before the limit.
-Increase `-PaiEvalLimit=66` to run the entire corpus. Repeat separately for each model
+Increase `-PaiEvalLimit=67` to run the entire corpus. Repeat separately for each model
 and difficulty; reports identify both provider and model. A filtered run is a sample,
 not a full-corpus result. `-PaiEvalEndpoint=URL` overrides the endpoint.
 Use `-PaiEvalCases=lifecycle-position-return` to select exact case IDs (comma-separated).
@@ -112,13 +112,19 @@ bounded context budget; see [request lifecycle](ai-request-lifecycle.md) for the
 The current prompt is sent once, and fresh live-preset inspection remains
 authoritative; historical proposals do not imply that edits were accepted.
 
-## Remaining evidence-dependent work
+## Model routing and remaining evidence-dependent work
 
-Automatic fast/strong routing is deliberately not enabled. First run matched live
-benchmarks with candidate models, repeat to check variance, and compare graph pass
-rate, tool turns, latency, and cost. Choose a fast model only if its quality is close
-to the stronger baseline, and keep complex requests on the stronger model if needed.
-No measured provider quality or latency improvement is claimed by offline tests.
+OpenAI's `Auto` option routes short, simple requests to `gpt-5.4-mini` and structurally
+complex requests to `gpt-5.5` using a small deterministic request/graph complexity
+score. An explicit model selection always wins. Supported GPT-5.4/5.5 requests also
+set low text verbosity; Pathmind independently enforces a concise reply budget unless
+the user explicitly asks for detail.
+
+This routing policy is covered by deterministic tests, but its provider quality,
+latency, and cost advantage remains unmeasured. Run matched live benchmarks with both
+models, repeat to check variance, and compare graph pass rate, tool turns, latency,
+and cost. Adjust the threshold only from those results. Offline tests make no measured
+provider-quality claim.
 
 See [Pass 4 verification](ai-pass-4-verification.md) for targeted benchmarks, offline
 evidence, and outstanding world/UI checks.

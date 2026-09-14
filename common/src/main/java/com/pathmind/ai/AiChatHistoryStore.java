@@ -88,6 +88,7 @@ public final class AiChatHistoryStore {
     }
     public synchronized void saveSummary(AiProviderType provider, AiConversationSummary summary) {
         if (summary == null) return;
+        summary = AiConversationSummary.merge(summaries.get(provider), summary);
         if (GSON.toJson(summary).length() > 8000) throw new IllegalStateException("Conversation summary exceeds its 8,000-character context budget.");
         if (unreadable) throw new IllegalStateException(warning);
         var previous = summaries.put(provider, summary);

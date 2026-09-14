@@ -15,6 +15,27 @@ import static org.junit.jupiter.api.Assertions.*;
 class AiRequestIntentTest {
     private static final String EDIT = "make the preset: after it jumps, create a variable for the players current position, walk forward 5 blocks, then travel back to that position with pathfinding";
 
+    @Test void oversizedOrdinaryReplyIsRejectedAndCorrectedReplyCanFinish() {
+        String user = "What does this preset do?";
+        var tooLong = decision("finish", "undecided", "discuss", user);
+        tooLong.addProperty("response", "explanation ".repeat(100));
+        var concise = action("finish", "undecided");
+        concise.addProperty("response", "It runs the current sequence in order.");
+        var report = run(new Script(tooLong, concise), user, fixture());
+        assertTrue(report.succeeded(), report.error());
+        assertEquals("It runs the current sequence in order.", report.proposal().response());
+        assertTrue(report.trace().stream().anyMatch(step -> step.code().equals("response_too_long")));
+    }
+
+    @Test void explicitlyRequestedDetailedReplyGetsALargerBudget() {
+        String user = "Give a complete explanation of at least 500 characters.";
+        var detailed = decision("finish", "undecided", "discuss", user);
+        detailed.addProperty("response", "useful detail ".repeat(60));
+        var report = run(new Script(detailed), user, fixture());
+        assertTrue(report.succeeded(), report.error());
+        assertTrue(report.proposal().response().length() >= 500);
+    }
+
     @Test void repeatedInspectionGetsRecoveryGuidanceAndCanStillProduceAProposal() {
         String user = "Append a wait to this preset";
         var report = run(new Script(decision("inspect_preset", "current", "edit", user),

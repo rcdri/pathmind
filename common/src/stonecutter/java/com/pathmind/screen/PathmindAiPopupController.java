@@ -1,6 +1,7 @@
 package com.pathmind.screen;
 
 import com.pathmind.ai.AiPresetService;
+import com.pathmind.ai.AiModelRouter;
 import com.pathmind.ai.AiProviderRegistry;
 import com.pathmind.ai.AiProviderType;
 import com.pathmind.ai.AiChatHistoryStore;
@@ -536,7 +537,7 @@ final class PathmindAiPopupController {
     private void type(char character) { if (replaceOnType) clearField(); replaceOnType = false; if (activeField == Field.KEY && apiKey.length() < 512) apiKey += character; else if (activeField == Field.PROMPT) insertPromptText(String.valueOf(character)); }
     private void backspace() { if (replaceOnType) { clearField(); return; } if (activeField == Field.KEY && !apiKey.isEmpty()) apiKey = apiKey.substring(0, apiKey.length() - 1); else if (activeField == Field.PROMPT) { if (promptAnchor != promptCursor) deletePromptSelection(); else if (promptCursor > 0) { prompt = prompt.substring(0, promptCursor - 1) + prompt.substring(promptCursor); promptCursor--; promptAnchor = promptCursor; } } }
     private void clearField() { if (activeField == Field.KEY) apiKey = ""; else if (activeField == Field.PROMPT) { prompt = ""; promptCursor = 0; promptScrollLine = 0; } replaceOnType = false; }
-    private String configuredModel() { String configured = AiProviderRegistry.config(provider).model; return configured == null || configured.isBlank() ? provider.defaultModel() : configured; }
+    private String configuredModel() { String configured = AiProviderRegistry.config(provider).model; return configured == null || configured.isBlank() ? provider == AiProviderType.OPENAI ? AiModelRouter.AUTOMATIC : provider.defaultModel() : configured; }
     private void renderModelDropdown(GuiGraphics c, Font f, int iy, int mouseX, int mouseY, int accent) {
         int ix = x + 12, iw = width - 24;
         boolean hovered = contains(mouseX, mouseY, ix, iy, iw, 20);
@@ -564,7 +565,7 @@ final class PathmindAiPopupController {
             .build());
     }
     private String[] modelOptions() { return switch (provider) {
-        case OPENAI -> new String[]{provider.defaultModel(), "gpt-5.1", "gpt-5-mini"};
+        case OPENAI -> new String[]{AiModelRouter.AUTOMATIC, "gpt-5.4-mini", "gpt-5.5"};
         case ANTHROPIC -> new String[]{provider.defaultModel(), "claude-sonnet-5", "claude-haiku-4-5-20251001"};
         case GEMINI -> new String[]{provider.defaultModel(), "gemini-3.7-flash", "gemini-3.1-pro-preview"};
         default -> new String[]{provider.defaultModel()};

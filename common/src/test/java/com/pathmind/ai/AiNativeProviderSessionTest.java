@@ -47,9 +47,17 @@ class AiNativeProviderSessionTest {
         assertEquals("call-1", input.get(3).getAsJsonObject().get("call_id").getAsString());
         assertFalse(body.get("parallel_tool_calls").getAsBoolean());
         assertTrue(body.getAsJsonArray("tools").get(0).getAsJsonObject().get("strict").getAsBoolean());
+        assertFalse(body.has("text"));
         session.close();
         assertThrows(java.util.concurrent.CompletionException.class, () -> session.generate(REQUEST, RESULT).join());
         assertEquals(2, bodies.size());
+    }
+
+    @Test void currentOpenAiModelsRequestLowVerbosity() {
+        List<JsonObject> bodies = new ArrayList<>();
+        var session = session(AiNativeProviderSession.Dialect.OPENAI, bodies, OPENAI, false);
+        session.generate(new AiPresetRequest("instructions", "request", "gpt-5.4-mini"), null).join();
+        assertEquals("low", bodies.getFirst().getAsJsonObject("text").get("verbosity").getAsString());
     }
 
     @Test void explicitlyStoredOpenAiSessionUsesOnlyNewToolResult() {

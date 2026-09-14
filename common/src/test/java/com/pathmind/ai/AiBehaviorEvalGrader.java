@@ -44,6 +44,11 @@ final class AiBehaviorEvalGrader {
         if (proposal.response().length() < integer(test.expected(), "minResponseChars", 0)) {
             behavior = false; failures.add("Response shorter than required complete explanation.");
         }
+        int minimumResponse = integer(test.expected(), "minResponseChars", 0);
+        int maximumResponse = integer(test.expected(), "maxResponseChars", minimumResponse > 0 ? Math.max(4_000, minimumResponse) : 600);
+        if (proposal.response().length() > maximumResponse) {
+            behavior = false; failures.add("Response exceeds concise answer budget: " + proposal.response().length() + " > " + maximumResponse + ".");
+        }
         if (test.target().equals("inspect")) {
             if (!test.expected().has("outcome") && proposal.outcome() != AiCompletionOutcome.ANSWER) { behavior = false; failures.add("Inspection did not complete with an answer."); }
             if (proposal.graph() != null) { behavior = false; failures.add("Inspection returned a graph mutation."); }

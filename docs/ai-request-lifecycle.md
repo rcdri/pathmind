@@ -61,6 +61,9 @@ Chat preserves paragraphs, lists, and complete responses instead of the former
 individual technical details a 16,000-character limit; oversized responses are
 rejected explicitly rather than saved partially. Oversized diagnostic messages
 include an explicit omission notice. Previously truncated messages cannot be restored.
+Agent replies normally must fit within 600 characters and 90 words; an explicit request
+for detail raises that budget to 4,000 characters and 650 words. If a model exceeds the
+applicable budget, the tool result asks it to retry instead of silently cutting the text.
 Technical tool results are grouped behind a Details toggle, including failed tools.
 
 Scrolling keeps a message/character anchor across resizing, new messages, and detail
@@ -86,7 +89,8 @@ The archive remains complete and local. The request context has four distinct la
   inspection tools against the same request-time snapshot, not historical chat.
 - A compact, AI-authored conversational summary: goal, confirmed user decisions,
   unresolved work. `finish` refreshes it without an extra provider request. A successful,
-  non-cancelled request saves it; null leaves the previous summary unchanged. It is
+  non-cancelled request saves it; an omitted goal retains the existing goal while still
+  accepting updated decisions and unresolved work. It is
   advisory and visible, never a graph snapshot or edit authorization. Older archives
   start without summaries; this cannot recover information that was never saved or
   no longer reaches the model. Summarization quality still needs live evaluation.
