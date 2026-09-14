@@ -139,7 +139,7 @@ public final class AiGraphCommandEngine {
     private static void setParameter(NodeGraphData graph, JsonObject command, Map<String, String> references, JsonArray effects) {
         NodeGraphData.NodeData node = resolveNode(graph, references, requiredReference(command, "ref"));
         String parameterId = requiredString(command, "parameterId");
-        setValidatedParameter(node, parameterId, parameterValue(command));
+        setValidatedParameter(graph, node, parameterId, parameterValue(command));
         effects.add("Set " + displayRef(command, "ref", node) + "." + NodeParameter.createDefaultId(parameterId) + ".");
     }
 
@@ -161,7 +161,7 @@ public final class AiGraphCommandEngine {
             }
         }
         List<PendingParameter> checked = new ArrayList<>();
-        requested.forEach((parameterId, value) -> checked.add(validateParameter(node, parameterId, value)));
+        requested.forEach((parameterId, value) -> checked.add(validateParameter(graph, node, parameterId, value)));
         for (PendingParameter pending : checked) {
             pending.parameter().setValue(pending.value());
             pending.parameter().setUserEdited(true);
@@ -189,21 +189,29 @@ public final class AiGraphCommandEngine {
         else if (nullableString(command, "mode") == null) throw new IllegalArgumentException("configure_node needs a mode or parameterValues.");
     }
 
-    private static void setValidatedParameter(NodeGraphData.NodeData node, String parameterId, String value) {
-        PendingParameter checked = validateParameter(node, parameterId, value);
+    private static void setValidatedParameter(NodeGraphData graph, NodeGraphData.NodeData node, String parameterId, String value) {
+        PendingParameter checked = validateParameter(graph, node, parameterId, value);
         checked.parameter().setValue(checked.value());
         checked.parameter().setUserEdited(true);
     }
 
-    private static PendingParameter validateParameter(NodeGraphData.NodeData node, String parameterId, String value) {
+    private static PendingParameter validateParameter(NodeGraphData graph, NodeGraphData.NodeData node, String parameterId, String value) {
         String normalized = NodeParameter.createDefaultId(parameterId);
         NodeGraphData.ParameterData parameter = safeParameters(node).stream().filter(candidate -> candidate != null
-            && (parameterId.equals(candidate.getName()) || normalized.equals(NodeParameter.createDefaultId(candidate.getId()))))
-            .findFirst().orElseThrow(() -> new IllegalArgumentException("Node " + node.getType()
-                + " has no parameter '" + parameterId + "'. Describe its node contract and use an exact parameter id."));
+            && normalized.equals(AiConfiguredValues.parameterId(candidate)))
+            .findFirst().orElseThrow(() -> new CommandFailure("unknown_instance_parameter", true,
+                "Node " + node.getId() + " (" + node.getType() + ") has no stored parameter '" + parameterId
+                + "'. Inspect its instance parameters and parameterAttachments, not just its type contract. "
+                + "Configure the attached value source by its own ref when it supplies this input."));
+        AiConfiguredValues.Value effective = AiConfiguredValues.read(graph, node, normalized);
+        if (effective.staticallyKnown() && !node.getId().equals(effective.sourceNodeId())) {
+            throw new CommandFailure("parameter_overridden", true, "Parameter '" + normalized + "' on "
+                + node.getId() + " is supplied by attached node " + effective.sourceNodeId()
+                + ". Configure that node by its own ref; changing the host literal would not change execution.");
+        }
         try {
             AiParameterValidator.CheckedValue checked = AiParameterValidator.validate(
-                node.getType(), node.getMode(), parameter.getId(), value);
+                node.getType(), node.getMode(), normalized, value);
             return new PendingParameter(parameter, checked.value());
         } catch (IllegalArgumentException exception) {
             throw new CommandFailure("invalid_parameter_value", true, exception.getMessage());
@@ -932,10 +940,10 @@ public final class AiGraphCommandEngine {
             for (NodeGraphData.ParameterData parameter : safeParameters(node)) {
                 if (parameter == null) continue;
                 JsonObject actual = new JsonObject();
-                actual.addProperty("parameterId", parameter.getId());
+                actual.addProperty("parameterId", AiConfiguredValues.parameterId(parameter));
                 actual.addProperty("type", parameter.getType());
                 actual.addProperty("value", parameter.getValue());
-                AiConfiguredValues.Value effective = AiConfiguredValues.read(graph, node, parameter.getId());
+                AiConfiguredValues.Value effective = AiConfiguredValues.read(graph, node, AiConfiguredValues.parameterId(parameter));
                 actual.addProperty("staticallyKnown", effective.staticallyKnown());
                 actual.addProperty("effectiveValue", effective.effective());
                 actual.addProperty("sourceNodeId", effective.sourceNodeId());

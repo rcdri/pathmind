@@ -30,10 +30,14 @@ final class AiConfiguredValues {
     private static String literal(NodeGraphData.NodeData node, String id) {
         if (node.getParameters() == null) return null;
         for (var parameter : node.getParameters()) {
-            if (parameter != null && id.equals(NodeParameter.createDefaultId(
-                parameter.getId() == null ? parameter.getName() : parameter.getId()))) return parameter.getValue();
+            if (parameter != null && id.equals(parameterId(parameter))) return parameter.getValue();
         }
         return null;
+    }
+
+    static String parameterId(NodeGraphData.ParameterData parameter) {
+        return NodeParameter.createDefaultId(parameter.getId() == null || parameter.getId().isBlank()
+            ? parameter.getName() : parameter.getId());
     }
 
     record Value(String literal, String effective, String sourceNodeId, boolean staticallyKnown) { }

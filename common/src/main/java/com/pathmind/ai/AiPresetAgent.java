@@ -508,6 +508,16 @@ public final class AiPresetAgent {
         if (!mutation.success()) {
             JsonObject result = codedError(mutation.errorCode(), mutation.message());
             result.addProperty("recoverable", mutation.recoverable());
+            JsonArray affectedRefs = new JsonArray();
+            for (JsonElement element : commands) {
+                if (!element.isJsonObject()) continue;
+                for (String key : List.of("ref", "host", "child")) {
+                    String ref = nullableString(element.getAsJsonObject(), key);
+                    if (ref != null) affectedRefs.add(ref);
+                }
+            }
+            if (!affectedRefs.isEmpty()) result.add("instanceContext", AiGraphQueryEngine.inspectSubgraph(
+                state.workingGraph, affectedRefs, 1, state.nodeReferences));
             if (mutation.recoverable()) result.addProperty("guidance",
                 "Repair the command or inspect the relevant subgraph, then retry. This rejection does not prove the task is blocked.");
             return ToolResult.more(result);
@@ -768,6 +778,7 @@ public final class AiPresetAgent {
         }
         String prompt = "You are Pathmind's graph agent. Work through one tool action per response. Never emit a complete graph directly. "
             + intentInstructions()
+            + "For existing nodes, find_nodes/inspect_subgraph return actual instance parameters and parameterAttachments with sourceNodeId and sourceParameters. Type contracts describe canonical nodes, not necessarily every saved instance. Edit only the requested fields; configure an attached source by its own ref when it supplies the value. On rejection, use instanceContext to correct the target or parameter rather than repeating the same command. "
             + "Available tools: inspect_preset returns the exact open graph and draft; list_node_types lists creatable types; describe_node_types accepts nodeTypes and returns exact sockets, modes, parameters, attachment contracts, and relevant examples; "
             + "list_examples returns a compact index or ranks at most four examples by nodeTypes and exampleTraits; inspect_example returns one exact serialized example. Retrieve examples only for unfamiliar or structurally relevant concepts; do not inspect unrelated examples. "
             + "find_nodes searches the draft by type or text and inspect_subgraph returns only a bounded neighborhood; use these instead of repeatedly requesting the complete preset. plan_graph records a short structural plan and is required before the first edit to a new or current graph. "

@@ -284,14 +284,20 @@ class AiPresetAgentTest {
         JsonObject attachment = emptyCommand("attach_parameter");
         attachment.addProperty("host", "craft"); attachment.addProperty("child", "input");
         attachment.addProperty("slotIndex", 0); wrong.add(attachment);
-        wrong.add(setParameters("craft", "minecraft:oak_planks", "1"));
 
         JsonArray repair = new JsonArray();
-        repair.add(setParameters("craft", "minecraft:oak_planks", "4"));
+        JsonObject amount = emptyCommand("set_parameter");
+        amount.addProperty("ref", "craft");
+        amount.addProperty("parameterId", "amount");
+        amount.addProperty("value", "4");
+        repair.add(amount);
+        JsonArray overriddenRepair = new JsonArray();
+        overriddenRepair.add(setParameters("craft", "minecraft:oak_planks", "4"));
         FakeProvider provider = new FakeProvider(
             plan.toString(),
             action("apply_graph_commands", "new", wrong, List.of(), 0),
             action("validate_graph", "new", null, List.of(), 1),
+            action("apply_graph_commands", "new", overriddenRepair, List.of(), 1),
             action("apply_graph_commands", "new", repair, List.of(), 1),
             action("validate_graph", "new", null, List.of(), 2),
             action("finish", "new", null, List.of(), 2)
@@ -302,6 +308,9 @@ class AiPresetAgentTest {
 
         assertTrue(provider.requests.get(3).userPrompt().contains("requirement_mismatch"));
         assertTrue(provider.requests.get(3).userPrompt().contains("draft contains '1'"));
+        assertTrue(provider.requests.get(4).userPrompt().contains("parameter_overridden"));
+        assertTrue(provider.requests.get(4).userPrompt().contains("instanceContext"));
+        assertTrue(provider.requests.get(4).userPrompt().contains("sourceParameters"));
         assertTrue(proposal.review().changes().stream().anyMatch(line -> line.contains("Amount=4")));
     }
 

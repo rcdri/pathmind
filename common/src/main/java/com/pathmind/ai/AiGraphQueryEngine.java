@@ -44,7 +44,7 @@ public final class AiGraphQueryEngine {
             .filter(node -> types.isEmpty() || types.contains(node.getType()))
             .filter(node -> needle.isEmpty() || searchable(node, aliases.get(node.getId())).contains(needle))
             .limit(MAX_RESULTS)
-            .forEach(node -> matches.add(summary(node, aliases.get(node.getId()))));
+            .forEach(node -> matches.add(summary(graph, node, aliases.get(node.getId()))));
         JsonObject result = new JsonObject();
         result.addProperty("ok", true);
         result.addProperty("message", "Found " + matches.size() + " matching node(s).");
@@ -82,7 +82,7 @@ public final class AiGraphQueryEngine {
         selected.stream().map(byId::get).filter(java.util.Objects::nonNull)
             .sorted(Comparator.comparingInt(NodeGraphData.NodeData::getY)
                 .thenComparingInt(NodeGraphData.NodeData::getX))
-            .forEach(node -> nodes.add(summary(node, aliases.get(node.getId()))));
+            .forEach(node -> nodes.add(summary(graph, node, aliases.get(node.getId()))));
         JsonArray connections = new JsonArray();
         for (NodeGraphData.ConnectionData edge : graph.getConnections()) {
             if (edge == null || !selected.contains(edge.getOutputNodeId()) || !selected.contains(edge.getInputNodeId())) continue;
@@ -101,7 +101,7 @@ public final class AiGraphQueryEngine {
         return result;
     }
 
-    private static JsonObject summary(NodeGraphData.NodeData node, String alias) {
+    private static JsonObject summary(NodeGraphData graph, NodeGraphData.NodeData node, String alias) {
         JsonObject result = new JsonObject();
         result.addProperty("ref", alias == null ? node.getId() : alias);
         result.addProperty("id", node.getId());
@@ -111,11 +111,29 @@ public final class AiGraphQueryEngine {
         result.addProperty("y", node.getY());
         JsonObject parameters = new JsonObject();
         if (node.getParameters() != null) for (NodeGraphData.ParameterData parameter : node.getParameters()) {
-            if (parameter != null && parameter.getValue() != null && !parameter.getValue().isBlank()) {
-                parameters.addProperty(parameter.getId(), parameter.getValue());
+            if (parameter != null) {
+                parameters.addProperty(AiConfiguredValues.parameterId(parameter), parameter.getValue());
             }
         }
         result.add("parameters", parameters);
+        JsonArray attachments = new JsonArray();
+        if (node.getParameterAttachments() != null) for (var attachment : node.getParameterAttachments()) {
+            if (attachment == null) continue;
+            JsonObject input = new JsonObject();
+            input.addProperty("slotIndex", attachment.getSlotIndex());
+            input.addProperty("sourceNodeId", attachment.getParameterNodeId());
+            graph.getNodes().stream().filter(child -> child != null
+                && java.util.Objects.equals(child.getId(), attachment.getParameterNodeId())).findFirst().ifPresent(child -> {
+                    input.addProperty("sourceType", child.getType().name());
+                    JsonObject sourceParameters = new JsonObject();
+                    if (child.getParameters() != null) for (var parameter : child.getParameters()) {
+                        if (parameter != null) sourceParameters.addProperty(AiConfiguredValues.parameterId(parameter), parameter.getValue());
+                    }
+                    input.add("sourceParameters", sourceParameters);
+                });
+            attachments.add(input);
+        }
+        result.add("parameterAttachments", attachments);
         if (node.getAttachedSensorId() != null) result.addProperty("sensor", node.getAttachedSensorId());
         if (node.getAttachedActionId() != null) result.addProperty("action", node.getAttachedActionId());
         if (node.getParentControlId() != null) result.addProperty("sensorHost", node.getParentControlId());
