@@ -19,6 +19,7 @@ public final class AiAgentTurnSchema {
         JsonObject planRequirement = object(
             property("ref", described(string(), "Node alias the plan will create or edit.")),
             property("nodeType", described(enumValues(NodeType.values()), "Expected node type for the alias.")),
+            property("mode", described(nullable(enumValues(NodeMode.values())), "Expected mode for mode-specific parameter requirements, or null for the default.")),
             property("parameterId", described(string(), "Exact behavior-shaping parameter id.")),
             property("value", described(string(), "Required final value serialized according to its parameter type."))
         );
@@ -31,7 +32,7 @@ public final class AiAgentTurnSchema {
             property("slotIndex", described(nullable(integer()), "Body parameter slot used with bindToRef."))
         );
         JsonObject command = object(
-            property("kind", described(enumString("add_node", "set_mode", "set_parameter", "set_parameters", "connect",
+            property("kind", described(enumString("add_node", "set_mode", "set_parameter", "set_parameters", "configure_node", "connect",
                 "disconnect", "attach_action", "attach_sensor", "attach_parameter", "detach_action",
                 "detach_sensor", "detach_parameter", "remove_node", "add_sequence", "insert_sequence_after",
                 "wrap_in_repeat", "wrap_in_condition", "create_branch", "declare_variable", "declare_list",

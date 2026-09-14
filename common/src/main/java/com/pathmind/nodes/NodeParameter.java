@@ -16,6 +16,11 @@ public class NodeParameter {
     private double doubleValue;
     private boolean boolValue;
     private boolean userEdited;
+    private ParameterValueContract valueContract = ParameterValueContract.primitive();
+
+    public ParameterValueContract getValueContract() { return valueContract; }
+
+    void setValueContract(ParameterValueContract contract) { valueContract = contract; }
 
     public NodeParameter(String name, ParameterType type, String defaultValue) {
         this(createDefaultId(name), name, type, defaultValue);

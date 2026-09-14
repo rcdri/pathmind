@@ -275,6 +275,15 @@ class AiPresetAgentTest {
         JsonArray refs = new JsonArray(); refs.add("start"); refs.add("craft");
         JsonArray types = new JsonArray(); types.add("START"); types.add("CRAFT");
         sequence.add("refs", refs); sequence.add("nodeTypes", types); wrong.add(sequence);
+        wrong.add(addNode("input", "PARAM_ITEM"));
+        JsonObject inputValue = emptyCommand("set_parameter");
+        inputValue.addProperty("ref", "input");
+        inputValue.addProperty("parameterId", "Item");
+        inputValue.addProperty("value", "minecraft:oak_planks");
+        wrong.add(inputValue);
+        JsonObject attachment = emptyCommand("attach_parameter");
+        attachment.addProperty("host", "craft"); attachment.addProperty("child", "input");
+        attachment.addProperty("slotIndex", 0); wrong.add(attachment);
         wrong.add(setParameters("craft", "minecraft:oak_planks", "1"));
 
         JsonArray repair = new JsonArray();
@@ -293,7 +302,7 @@ class AiPresetAgentTest {
 
         assertTrue(provider.requests.get(3).userPrompt().contains("requirement_mismatch"));
         assertTrue(provider.requests.get(3).userPrompt().contains("draft contains '1'"));
-        assertTrue(proposal.review().changes().stream().anyMatch(line -> line.contains("Craft 4× minecraft:oak_planks")));
+        assertTrue(proposal.review().changes().stream().anyMatch(line -> line.contains("Amount=4")));
     }
 
     private static String action(String tool, String target, JsonArray commands, List<String> workLog) {
@@ -459,8 +468,7 @@ class AiPresetAgentTest {
         public CompletableFuture<String> generate(AiPresetRequest request) {
             requests.add(request);
             String response = responses.poll();
-            if (response == null) return CompletableFuture.failedFuture(new AssertionError("Unexpected agent turn after: "
-                + (requests.size() < 2 ? "first request" : requests.get(requests.size() - 2).userPrompt())));
+            if (response == null) return CompletableFuture.failedFuture(new AssertionError("Unexpected agent turn"));
             // Legacy fixtures explicitly supplied graph targets; supply the separate request assessment.
             if (requests.size() == 1) {
                 JsonObject first = JsonParser.parseString(response).getAsJsonObject();

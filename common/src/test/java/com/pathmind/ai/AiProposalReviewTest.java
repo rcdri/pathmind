@@ -44,7 +44,7 @@ class AiProposalReviewTest {
         AiProposalReview review = AiProposalReview.create(null,
             NodeGraphPersistence.parseNodeGraphData(built.graph().toString()));
 
-        assertTrue(review.changes().stream().anyMatch(line -> line.contains("Craft 4× minecraft:oak_planks")));
+        assertTrue(review.changes().stream().anyMatch(line -> line.contains("Item=minecraft:oak_planks") && line.contains("Amount=4")));
     }
 
     private static NodeGraphData.NodeData node(String id, NodeType type) {

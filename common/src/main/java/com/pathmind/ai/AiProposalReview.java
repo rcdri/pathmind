@@ -22,11 +22,11 @@ public record AiProposalReview(List<String> changes, List<String> executionPaths
         Map<String, NodeGraphData.NodeData> newNodes = nodes(after);
         for (Map.Entry<String, NodeGraphData.NodeData> entry : newNodes.entrySet()) {
             NodeGraphData.NodeData previous = oldNodes.get(entry.getKey());
-            if (previous == null) add(changes, "+ node " + nodeLabel(entry.getValue()));
-            else if (!GSON.toJson(previous).equals(GSON.toJson(entry.getValue()))) add(changes, "~ node " + nodeLabel(entry.getValue()));
+            if (previous == null) add(changes, "+ node " + nodeLabel(entry.getValue(), after));
+            else if (!GSON.toJson(previous).equals(GSON.toJson(entry.getValue()))) add(changes, "~ node " + nodeLabel(entry.getValue(), after));
         }
         for (Map.Entry<String, NodeGraphData.NodeData> entry : oldNodes.entrySet()) {
-            if (!newNodes.containsKey(entry.getKey())) add(changes, "− node " + nodeLabel(entry.getValue()));
+            if (!newNodes.containsKey(entry.getKey())) add(changes, "− node " + nodeLabel(entry.getValue(), before));
         }
         diffSet(changes, connections(before), connections(after), "connection");
         diffSet(changes, attachments(before), attachments(after), "attachment");
@@ -93,28 +93,27 @@ public record AiProposalReview(List<String> changes, List<String> executionPaths
         else if (changes.size() == MAX_CHANGE_LINES) changes.add("…additional changes omitted");
     }
 
-    private static String nodeLabel(NodeGraphData.NodeData node) {
+    private static String nodeLabel(NodeGraphData.NodeData node, NodeGraphData graph) {
         String label = (node.getType() == null ? "UNKNOWN" : node.getType().name()) + " [" + node.getId() + "]";
-        String behavior = behaviorSummary(node);
+        String behavior = behaviorSummary(node, graph);
         return behavior.isBlank() ? label : label + " — " + behavior;
     }
 
-    private static String behaviorSummary(NodeGraphData.NodeData node) {
-        if (node.getType() != com.pathmind.nodes.NodeType.CRAFT) return "";
-        String item = parameter(node, "item");
-        String amount = parameter(node, "amount");
-        if (item == null || amount == null) return "";
-        return "Craft " + amount + "× " + item;
-    }
-
-    private static String parameter(NodeGraphData.NodeData node, String id) {
-        if (node.getParameters() == null) return null;
-        for (NodeGraphData.ParameterData parameter : node.getParameters()) {
-            if (parameter != null && id.equals(com.pathmind.nodes.NodeParameter.createDefaultId(parameter.getId()))) {
-                return parameter.getValue();
+    private static String behaviorSummary(NodeGraphData.NodeData node, NodeGraphData graph) {
+        List<String> values = new ArrayList<>();
+        if (node.getMode() != null) values.add("mode=" + node.getMode().name());
+        if (node.getParameters() != null) for (NodeGraphData.ParameterData parameter : node.getParameters()) {
+            if (parameter != null) {
+                AiConfiguredValues.Value actual = AiConfiguredValues.read(graph, node, parameter.getId());
+                values.add(parameter.getName() + "=" + (actual.staticallyKnown() ? actual.effective() : "runtime-dependent")
+                    + (actual.staticallyKnown() && !node.getId().equals(actual.sourceNodeId())
+                        ? " (from " + actual.sourceNodeId() + ")" : ""));
             }
         }
-        return null;
+        if (node.getParameterAttachments() != null && !node.getParameterAttachments().isEmpty()) {
+            values.add("attached runtime inputs override corresponding literal values");
+        }
+        return String.join(", ", values);
     }
 
     private static boolean present(String value) { return value != null && !value.isBlank(); }

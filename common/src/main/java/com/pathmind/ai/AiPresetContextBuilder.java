@@ -96,6 +96,7 @@ public final class AiPresetContextBuilder {
             parameterContract.addProperty("name", parameter.getName());
             parameterContract.addProperty("type", parameter.getType().name());
             parameterContract.addProperty("default", parameter.getDefaultValue());
+            parameterContract.add("valueContract", new com.google.gson.Gson().toJsonTree(parameter.getValueContract()));
             parameters.add(parameterContract);
         }
         return parameters;
@@ -111,6 +112,7 @@ public final class AiPresetContextBuilder {
             JsonArray acceptedTraits = new JsonArray();
             specimen.getAcceptedTraitsForParameterSlot(index).forEach(trait -> acceptedTraits.add(trait.name()));
             slot.add("acceptedTraits", acceptedTraits);
+            slot.addProperty("valueSource", "An attached value node supplies this slot at runtime; do not assume the host's literal fields are effective values.");
             slots.add(slot);
         }
         return slots;

@@ -28,6 +28,13 @@ public final class NodeCatalog {
     private static final Map<NodeMode, List<NodeParameterDefinition>> MODE_PARAMETER_DEFINITIONS = new EnumMap<>(NodeMode.class);
     private static final Map<NodeType, ExecutionRoute> EXECUTION_ROUTES = new EnumMap<>(NodeType.class);
     private static final List<SidebarGroupDefinition> SIDEBAR_GROUPS = new ArrayList<>();
+    // These reporters export configured fields without consulting the world or evaluating an expression.
+    private static final Set<NodeType> LITERAL_VALUE_TYPES = EnumSet.of(NodeType.PARAM_ITEM,
+        NodeType.PARAM_AMOUNT, NodeType.PARAM_DISTANCE, NodeType.PARAM_DURATION, NodeType.PARAM_COORDINATE,
+        NodeType.PARAM_RANGE, NodeType.PARAM_MESSAGE, NodeType.PARAM_BLOCK_FACE, NodeType.PARAM_KEY,
+        NodeType.PARAM_HAND, NodeType.PARAM_GUI, NodeType.PARAM_MOUSE_BUTTON);
+
+    public static boolean isLiteralValueSource(NodeType type) { return LITERAL_VALUE_TYPES.contains(type); }
     private static final String BOOLEAN_MODE_LITERAL = "literal";
     private static final String DIRECTION_MODE_EXACT = "exact";
     private static final double DEFAULT_DIRECTION_DISTANCE = 16.0;
@@ -908,18 +915,18 @@ public final class NodeCatalog {
         modeParameters(NodeMode.FOLLOW_PLAYER, of("Player", ParameterType.STRING, "Self"));
         modeParameters(NodeMode.FOLLOW_ENTITY_TYPE, of("Entity", ParameterType.STRING, "cow"));
         modeParameters(NodeMode.CRAFT_PLAYER_GUI,
-            of("Item", ParameterType.STRING, "stick"),
-            of("Amount", ParameterType.INTEGER, "1"));
+            of("Item", ParameterType.STRING, "stick").withContract(ParameterValueContract.identifier("item")),
+            of("Amount", ParameterType.INTEGER, "1").withContract(ParameterValueContract.quantity(1, "output items")));
         modeParameters(NodeMode.CRAFT_CRAFTING_TABLE,
-            of("Item", ParameterType.STRING, "stick"),
-            of("Amount", ParameterType.INTEGER, "1"));
+            of("Item", ParameterType.STRING, "stick").withContract(ParameterValueContract.identifier("item")),
+            of("Amount", ParameterType.INTEGER, "1").withContract(ParameterValueContract.quantity(1, "output items")));
         modeParameters(NodeMode.FARM_RANGE, of("Range", ParameterType.INTEGER, "10"));
         modeParameters(NodeMode.FARM_WAYPOINT,
             of("Waypoint", ParameterType.STRING, "farm"),
             of("Range", ParameterType.INTEGER, "10"));
         modeParameters(NodeMode.WALK_FOR,
-            of("Duration", ParameterType.DOUBLE, "1.0"),
-            of("Distance", ParameterType.DOUBLE, "0.0"));
+            of("Duration", ParameterType.DOUBLE, "1.0").withContract(ParameterValueContract.quantity(0, "seconds")),
+            of("Distance", ParameterType.DOUBLE, "0.0").withContract(ParameterValueContract.quantity(0, "blocks")));
         modeParameters(NodeMode.WALK_UNTIL);
         // Click Slot's three modes declare no parameters. The Slot node attached to the node's
         // required parameter slot is the only source for the index; a write-in field beside it
@@ -1085,7 +1092,7 @@ public final class NodeCatalog {
         typeParameters(NodeType.PARAM_BLOCK,
             of("Block", ParameterType.STRING, ""),
             of("State", ParameterType.STRING, ""));
-        typeParameters(NodeType.PARAM_ITEM, of("Item", ParameterType.STRING, ""));
+        typeParameters(NodeType.PARAM_ITEM, of("Item", ParameterType.STRING, "").withContract(ParameterValueContract.identifier("item")));
         typeParameters(NodeType.PARAM_ITEM_DATA, of("Field", ParameterType.STRING, ItemDataParameterDefinition.FIELD_ITEM_ID));
         typeParameters(NodeType.PARAM_VILLAGER_TRADE,
             of("Profession", ParameterType.STRING, "librarian"),
@@ -1117,8 +1124,8 @@ public final class NodeCatalog {
         typeParameters(NodeType.PARAM_GUI, of("GUI", ParameterType.STRING, "Any"));
         typeParameters(NodeType.PARAM_KEY, of("Key", ParameterType.STRING, "GLFW_KEY_SPACE"));
         typeParameters(NodeType.PARAM_MOUSE_BUTTON, of("MouseButton", ParameterType.STRING, "Left"));
-        typeParameters(NodeType.PARAM_RANGE, of("Range", ParameterType.INTEGER, "6"));
-        typeParameters(NodeType.PARAM_DISTANCE, of("Distance", ParameterType.DOUBLE, "2.0"));
+        typeParameters(NodeType.PARAM_RANGE, of("Range", ParameterType.INTEGER, "6").withContract(ParameterValueContract.quantity(0, "blocks")));
+        typeParameters(NodeType.PARAM_DISTANCE, of("Distance", ParameterType.DOUBLE, "2.0").withContract(ParameterValueContract.quantity(0, "blocks")));
         typeParameters(NodeType.PARAM_DIRECTION,
             of("direction_mode", "Mode", ParameterType.STRING, DIRECTION_MODE_EXACT),
             of("direction_cardinal", "Direction", ParameterType.STRING, ""),

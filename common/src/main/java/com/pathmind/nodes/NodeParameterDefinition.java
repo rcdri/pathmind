@@ -10,6 +10,12 @@ final class NodeParameterDefinition {
     private final String name;
     private final ParameterType type;
     private final Supplier<String> defaultValueSupplier;
+    private ParameterValueContract valueContract = ParameterValueContract.primitive();
+
+    NodeParameterDefinition withContract(ParameterValueContract contract) {
+        this.valueContract = contract;
+        return this;
+    }
 
     private NodeParameterDefinition(String id, String name, ParameterType type, Supplier<String> defaultValueSupplier) {
         this.id = id;
@@ -32,9 +38,9 @@ final class NodeParameterDefinition {
 
     NodeParameter createParameter() {
         String defaultValue = defaultValueSupplier.get();
-        if (id == null || id.isBlank()) {
-            return new NodeParameter(name, type, defaultValue);
-        }
-        return new NodeParameter(id, name, type, defaultValue);
+        NodeParameter parameter = id == null || id.isBlank()
+            ? new NodeParameter(name, type, defaultValue) : new NodeParameter(id, name, type, defaultValue);
+        parameter.setValueContract(valueContract);
+        return parameter;
     }
 }

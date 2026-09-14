@@ -26,7 +26,7 @@ class AiGoldenGraphLibraryTest {
     void bundledExamplesAreDiscoverableAndPassSerializedValidation() {
         JsonArray examples = AiGoldenGraphLibrary.list();
 
-        assertEquals(10, examples.size());
+        assertEquals(11, examples.size());
         for (int index = 0; index < examples.size(); index++) {
             String id = examples.get(index).getAsJsonObject().get("id").getAsString();
             AiGoldenGraphLibrary.Entry entry = AiGoldenGraphLibrary.find(id).orElseThrow();

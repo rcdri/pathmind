@@ -74,7 +74,7 @@ class AiGraphCommandEngineTest {
     }
 
     @Test
-    void malformedCraftItemAndPartialCraftUpdatesAreRejected() {
+    void malformedIdentifiersAreRejectedButPartialUpdatesRemainSupported() {
         JsonArray malformed = new JsonArray();
         malformed.add(command("add_node", "ref", "craft", "nodeType", "CRAFT"));
         JsonObject badValues = command("set_parameters", "ref", "craft");
@@ -86,7 +86,7 @@ class AiGraphCommandEngineTest {
 
         assertFalse(malformedResult.success());
         assertEquals("invalid_parameter_value", malformedResult.errorCode());
-        assertTrue(malformedResult.message().contains("one item identifier"));
+        assertTrue(malformedResult.message().contains("one resource identifier"));
 
         JsonArray partial = new JsonArray();
         partial.add(command("add_node", "ref", "craft", "nodeType", "CRAFT"));
@@ -95,8 +95,8 @@ class AiGraphCommandEngineTest {
         partial.add(partialValues);
         AiGraphCommandEngine.Result partialResult = AiGraphCommandEngine.apply(
             emptyGraph(), partial, Map.of(), true, true);
-        assertFalse(partialResult.success());
-        assertEquals("incomplete_parameter_group", partialResult.errorCode());
+        assertTrue(partialResult.success(), partialResult.message());
+        assertEquals("1", parameter(findNode(partialResult.graph(), partialResult.references().get("craft")), "amount").get("value").getAsString());
     }
 
     @Test

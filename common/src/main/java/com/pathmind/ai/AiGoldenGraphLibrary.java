@@ -46,6 +46,9 @@ public final class AiGoldenGraphLibrary {
         generated("inventory-workflow", "Inventory selection workflow", "An inventory sequence uses a typed slot selection.",
             AiGoldenGraphPatterns::inventoryWorkflow, AiExampleTrait.PARAMETER_ATTACHMENTS,
             AiExampleTrait.INVENTORY_WORKFLOW),
+        generated("configured-inventory-action", "Configure an action with a typed input", "A literal item reporter supplies the target; the action quantity is configured separately. Generalize the structure, not its sample values.",
+            AiGoldenGraphPatterns::configuredInventoryAction, AiExampleTrait.PARAMETER_ATTACHMENTS,
+            AiExampleTrait.INVENTORY_WORKFLOW),
         generated("navigation-collection", "Navigate and collect", "A coordinate target leads into a typed block collection action.",
             AiGoldenGraphPatterns::navigationAndCollection, AiExampleTrait.PARAMETER_ATTACHMENTS,
             AiExampleTrait.NAVIGATION_COLLECTION)

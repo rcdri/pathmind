@@ -401,6 +401,8 @@ public final class AiPresetAgent {
     }
 
     private static ToolResult planGraph(State state, JsonObject action) {
+        if (state.draftRevision > 0) return ToolResult.more(codedError("plan_frozen",
+            "The plan requirements are frozen after editing starts. Repair the graph to meet them; do not weaken requirements to pass validation."));
         String permissionError = draftPermissionError(state);
         if (permissionError != null) return ToolResult.more(codedError("draft_permission", permissionError));
         String goal = shortText(nullableString(action, "planGoal"), 240);
@@ -458,7 +460,12 @@ public final class AiPresetAgent {
             try {
                 NodeType nodeType = NodeType.valueOf(string(raw, "nodeType", "").toUpperCase(Locale.ROOT));
                 if (!containsAvailableType(state, nodeType)) return ToolResult.more(error("Required node type " + nodeType + " is unavailable."));
-                AiParameterValidator.CheckedValue checked = AiParameterValidator.validate(nodeType, null, parameterId, expected);
+                String requiredMode = nullableString(raw, "mode");
+                com.pathmind.nodes.NodeMode mode = requiredMode == null ? null
+                    : com.pathmind.nodes.NodeMode.valueOf(requiredMode);
+                if (mode != null && java.util.Arrays.stream(com.pathmind.nodes.NodeMode.getModesForNodeType(nodeType))
+                    .noneMatch(candidate -> candidate == mode)) throw new IllegalArgumentException("Invalid requirement mode for " + nodeType);
+                AiParameterValidator.CheckedValue checked = AiParameterValidator.validate(nodeType, mode, parameterId, expected);
                 String key = ref + "|" + checked.parameterId();
                 if (!requirementKeys.add(key)) return ToolResult.more(error("Duplicate plan requirement for " + key + "."));
                 JsonObject requirement = new JsonObject();
@@ -466,6 +473,7 @@ public final class AiPresetAgent {
                 requirement.addProperty("nodeType", nodeType.name());
                 requirement.addProperty("parameterId", checked.parameterId());
                 requirement.addProperty("value", checked.value());
+                if (mode != null) requirement.addProperty("mode", mode.name());
                 requirements.add(requirement);
             } catch (IllegalArgumentException exception) {
                 return ToolResult.more(codedError("invalid_plan_requirement", exception.getMessage()));
@@ -597,8 +605,19 @@ public final class AiPresetAgent {
                     .filter(candidate -> candidate != null && normalized.equals(
                         com.pathmind.nodes.NodeParameter.createDefaultId(candidate.getId())))
                     .findFirst().orElse(null);
-                if (parameter != null) actual = parameter.getValue();
-                if (expected.equals(actual)) continue;
+                AiConfiguredValues.Value configured = AiConfiguredValues.read(graph, node, parameterId);
+                actual = configured.effective();
+                boolean matches = expected.equals(actual);
+                if (configured.staticallyKnown() && actual != null) {
+                    try {
+                        matches = AiParameterValidator.validate(node.getType(), node.getMode(), parameterId, expected).value()
+                            .equals(AiParameterValidator.validate(node.getType(), node.getMode(), parameterId, actual).value());
+                    } catch (IllegalArgumentException ignored) { matches = false; }
+                }
+                if (requirement.has("mode") && !requirement.get("mode").getAsString().equals(
+                    node.getMode() == null ? "" : node.getMode().name())) matches = false;
+                if (matches && configured.staticallyKnown()) continue;
+                if (!configured.staticallyKnown()) code = "requirement_runtime_dependent";
                 message = "Required " + ref + "." + parameterId + " = '" + expected
                     + "', but the draft contains '" + (actual == null ? "<missing>" : actual) + "'.";
                 suggested.add("set_parameters");
@@ -752,9 +771,9 @@ public final class AiPresetAgent {
             + "Available tools: inspect_preset returns the exact open graph and draft; list_node_types lists creatable types; describe_node_types accepts nodeTypes and returns exact sockets, modes, parameters, attachment contracts, and relevant examples; "
             + "list_examples returns a compact index or ranks at most four examples by nodeTypes and exampleTraits; inspect_example returns one exact serialized example. Retrieve examples only for unfamiliar or structurally relevant concepts; do not inspect unrelated examples. "
             + "find_nodes searches the draft by type or text and inspect_subgraph returns only a bounded neighborhood; use these instead of repeatedly requesting the complete preset. plan_graph records a short structural plan and is required before the first edit to a new or current graph. "
-            + "apply_graph_commands mutates the isolated draft. Primitive commands are add_node, set_mode, set_parameter, set_parameters, connect, disconnect, attach_action, attach_sensor, attach_parameter, detach_action, detach_sensor, detach_parameter, and remove_node. Composition commands are add_sequence, insert_sequence_after, wrap_in_repeat, wrap_in_condition, create_branch, declare_variable, declare_list, clone_subgraph, replace_subgraph, create_routine, add_routine_call, and auto_layout. Pathmind owns real node IDs, typed values, defaults, serialization, rewiring, routine identities, and bidirectional attachment fields. validate_graph runs Pathmind's real validators and checks the finished graph against planRequirements; preview_execution returns bounded structural paths; finish returns the reviewed result. "
-            + "For add_node choose a short ref and nodeType. Later commands use that ref; Pathmind returns resolvedRefs with generated IDs. Prefer set_parameters for configured nodes so related values are validated and applied atomically; Craft requires Item and Amount together. Never combine a quantity with an identifier. Read actualValues after every patch instead of assuming values were accepted. connect uses from, to, outputSocket, and inputSocket. Attachments use host and child; attach_parameter also uses slotIndex. Set fields unused by a command to null. Every command batch must include the latest draftRevision from a tool result. "
-            + "Before editing, call plan_graph once with an outcome-focused goal, 1-8 structural steps, relevant node types and structures, only necessary assumptions, and one planRequirements entry for every explicit behavior-shaping value in the user's request. Requirements name the intended ref, nodeType, exact parameterId, and one typed value; for 'craft 4 oak planks', record separate Craft item=minecraft:oak_planks and amount=4 requirements. This is a concise architecture plan, not hidden reasoning. Use add_sequence for a new chain. Use insert_sequence_after with an anchor ref, outputSocket, ordered nodeTypes, and matching refs when adding behavior after an existing node; it atomically preserves the old successor. An occupied socket is a recoverable editing conflict: inspect or use the splice command, never finish blocked because of it. Wrappers accept one ordered connected refs selection; wrap_in_repeat also needs count and wrap_in_condition needs an existing sensor ref. create_branch accepts a sensor plus ordered trueRefs and falseRefs. clone_subgraph maps refs to newRefs; replace_subgraph rewires one-entry/one-exit refs to replacementRefs. create_routine extracts ordered refs into a definition, creates a call at their old location, and accepts typed routineInputs; an input can set bindToRef plus slotIndex to create and attach a typed reporter inside the routine body. add_routine_call reuses its routineRef, and attach_parameter supplies call arguments. End substantial construction with auto_layout. "
+            + "apply_graph_commands mutates the isolated draft. Primitive commands are add_node, set_mode, set_parameter, set_parameters, configure_node, connect, disconnect, attach_action, attach_sensor, attach_parameter, detach_action, detach_sensor, detach_parameter, and remove_node. Composition commands are add_sequence, insert_sequence_after, wrap_in_repeat, wrap_in_condition, create_branch, declare_variable, declare_list, clone_subgraph, replace_subgraph, create_routine, add_routine_call, and auto_layout. Pathmind owns real node IDs, typed values, defaults, serialization, rewiring, routine identities, and bidirectional attachment fields. validate_graph runs Pathmind's real validators and checks the finished graph against planRequirements; preview_execution returns bounded structural paths; finish returns the reviewed result. "
+            + "For add_node choose a short ref and nodeType. Later commands use that ref; Pathmind returns resolvedRefs with generated IDs. Prefer configure_node to set mode and related parameterValues atomically. Partial updates preserve unrelated values. Follow each parameter's valueContract, including its format, minimum, and unit. Never combine a quantity with an identifier. Read actualValues after every patch instead of assuming values were accepted. connect uses from, to, outputSocket, and inputSocket. Attachments use host and child; attach_parameter also uses slotIndex. Set fields unused by a command to null. Every command batch must include the latest draftRevision from a tool result. "
+            + "Before editing, call plan_graph once with an outcome-focused goal, 1-8 structural steps, relevant node types and structures, only necessary assumptions, and one planRequirements entry for every explicit behavior-shaping value in the user's request. Requirements name the intended ref, nodeType, exact parameterId, and one typed value; capture separate fields separately, preserving explicit units and quantities. Requirements check declared intent, not proof that the intent was extracted correctly. This is a concise architecture plan, not hidden reasoning. Use add_sequence for a new chain. Use insert_sequence_after with an anchor ref, outputSocket, ordered nodeTypes, and matching refs when adding behavior after an existing node; it atomically preserves the old successor. An occupied socket is a recoverable editing conflict: inspect or use the splice command, never finish blocked because of it. Wrappers accept one ordered connected refs selection; wrap_in_repeat also needs count and wrap_in_condition needs an existing sensor ref. create_branch accepts a sensor plus ordered trueRefs and falseRefs. clone_subgraph maps refs to newRefs; replace_subgraph rewires one-entry/one-exit refs to replacementRefs. create_routine extracts ordered refs into a definition, creates a call at their old location, and accepts typed routineInputs; an input can set bindToRef plus slotIndex to create and attach a typed reporter inside the routine body. add_routine_call reuses its routineRef, and attach_parameter supplies call arguments. End substantial construction with auto_layout. "
             + "Validation issues include expected structure, actual state, related nodes, suggested semantic operations, and focused inspectRefs. Repair only the reported relationship, then validate again; use disconnect or detach commands before replacing occupied relationships. "
             + "Use the supplied node index instead of calling list_node_types unless the index is insufficient. Inspect all relevant contracts in one batched call. Prefer one coherent command batch when possible. After commands, validate and repair every error. Successful validation includes preview_execution output, so finish immediately unless repair is needed. "
             + "Never claim a tool succeeded until its result says ok. Do not reveal hidden reasoning; workLog contains only concise user-visible actions. "

@@ -81,6 +81,23 @@ final class AiGoldenGraphPatterns {
         );
     }
 
+    static NodeGraphData configuredInventoryAction() {
+        JsonObject configuration = command("configure_node", "ref", "craft", "mode", "CRAFT_PLAYER_GUI");
+        JsonArray values = new JsonArray();
+        JsonObject amount = new JsonObject();
+        amount.addProperty("parameterId", "amount"); amount.addProperty("value", "4");
+        values.add(amount); configuration.add("parameterValues", values);
+        return build(
+            sequence(new String[] {"start", "open", "craft", "close"},
+                new String[] {"START", "OPEN_INVENTORY", "CRAFT", "CLOSE_GUI"}),
+            command("add_node", "ref", "item", "nodeType", "PARAM_ITEM"),
+            command("set_parameter", "ref", "item", "parameterId", "item", "value", "minecraft:oak_planks"),
+            configuration,
+            command("attach_parameter", "host", "craft", "child", "item", "slotIndex", 0),
+            command("auto_layout")
+        );
+    }
+
     static NodeGraphData navigationAndCollection() {
         return build(
             sequence(new String[] {"start", "goto", "collect", "after"},

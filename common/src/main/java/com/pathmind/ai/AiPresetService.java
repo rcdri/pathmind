@@ -86,6 +86,7 @@ public final class AiPresetService {
         for (String message : AiGraphIntegrityValidator.validate(proposal.graph(), baritoneAvailable, uiUtilsAvailable)) {
             issues.add(new ValidationIssue("error", "serialized_integrity", null, null, message));
         }
+        validateConfiguredParameters(proposal.graph(), null, issues);
         if (!issues.isEmpty()) return new Validation(false, limited(issues));
         try {
             List<Node> nodes = NodeGraphPersistence.convertToNodes(proposal.graph());
@@ -111,6 +112,33 @@ public final class AiPresetService {
         List<ValidationIssue> ordered = new ArrayList<>(issues);
         ordered.sort(java.util.Comparator.comparing(ValidationIssue::isError).reversed());
         return List.copyOf(ordered.subList(0, Math.min(12, ordered.size())));
+    }
+
+    private static void validateConfiguredParameters(NodeGraphData graph, String routineId,
+                                                     List<ValidationIssue> issues) {
+        if (graph == null || graph.getNodes() == null) return;
+        for (NodeGraphData.NodeData node : graph.getNodes()) {
+            if (node == null || node.getType() == null || node.getParameters() == null) continue;
+            Node specimen = Node.createForEditor(node.getType(), 0, 0);
+            if (node.getMode() != null) specimen.setMode(node.getMode());
+            for (var parameter : node.getParameters()) {
+                if (parameter == null || parameter.getValue() == null) continue;
+                String id = com.pathmind.nodes.NodeParameter.createDefaultId(
+                    parameter.getId() == null ? parameter.getName() : parameter.getId());
+                var definition = specimen.getParameters().stream().filter(candidate -> id.equals(candidate.getId()))
+                    .findFirst().orElse(null);
+                if (definition == null) continue; // Dynamic runtime interfaces are validated by the runtime validator.
+                if (parameter.getValue().isBlank() && !Boolean.TRUE.equals(parameter.getUserEdited())) continue;
+                try { definition.getValueContract().validate(definition.getType(), parameter.getValue()); }
+                catch (IllegalArgumentException failure) {
+                    issues.add(new ValidationIssue("error", "invalid_parameter_value", node.getId(), routineId,
+                        "Node '" + node.getId() + "' parameter " + id + ": " + failure.getMessage()));
+                }
+            }
+        }
+        for (var routine : graph.getRoutines()) if (routine != null) {
+            validateConfiguredParameters(routine.getGraph(), routine.getId(), issues);
+        }
     }
 
     private static String string(JsonObject json, String key, String fallback) {

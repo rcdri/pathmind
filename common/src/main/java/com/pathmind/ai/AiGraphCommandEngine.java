@@ -73,6 +73,7 @@ public final class AiGraphCommandEngine {
             case "set_mode" -> setMode(graph, command, references, effects);
             case "set_parameter" -> setParameter(graph, command, references, effects);
             case "set_parameters" -> setParameters(graph, command, references, effects);
+            case "configure_node" -> configureNode(graph, command, references, effects);
             case "connect" -> connect(graph, command, references, effects);
             case "disconnect" -> disconnect(graph, command, references, effects);
             case "attach_action" -> attach(graph, command, references, effects, NodeSlotType.ACTION);
@@ -138,12 +139,7 @@ public final class AiGraphCommandEngine {
     private static void setParameter(NodeGraphData graph, JsonObject command, Map<String, String> references, JsonArray effects) {
         NodeGraphData.NodeData node = resolveNode(graph, references, requiredReference(command, "ref"));
         String parameterId = requiredString(command, "parameterId");
-        if (node.getType() == NodeType.CRAFT && ("item".equals(NodeParameter.createDefaultId(parameterId))
-            || "amount".equals(NodeParameter.createDefaultId(parameterId)))) {
-            throw new CommandFailure("atomic_parameters_required", true,
-                "Set Craft item and amount together with set_parameters so the node cannot keep a stale default.");
-        }
-        setValidatedParameter(node, parameterId, requiredString(command, "value"));
+        setValidatedParameter(node, parameterId, parameterValue(command));
         effects.add("Set " + displayRef(command, "ref", node) + "." + NodeParameter.createDefaultId(parameterId) + ".");
     }
 
@@ -160,14 +156,9 @@ public final class AiGraphCommandEngine {
             JsonObject entry = element.getAsJsonObject();
             String parameterId = requiredString(entry, "parameterId");
             String normalized = NodeParameter.createDefaultId(parameterId);
-            if (requested.putIfAbsent(normalized, requiredString(entry, "value")) != null) {
+            if (requested.putIfAbsent(normalized, parameterValue(entry)) != null) {
                 throw new IllegalArgumentException("Parameter '" + parameterId + "' was supplied more than once.");
             }
-        }
-        if (node.getType() == NodeType.CRAFT && (requested.containsKey("item") || requested.containsKey("amount"))
-            && !(requested.containsKey("item") && requested.containsKey("amount"))) {
-            throw new CommandFailure("incomplete_parameter_group", true,
-                "Craft configuration requires both Item and Amount in the same set_parameters command.");
         }
         List<PendingParameter> checked = new ArrayList<>();
         requested.forEach((parameterId, value) -> checked.add(validateParameter(node, parameterId, value)));
@@ -176,6 +167,26 @@ public final class AiGraphCommandEngine {
             pending.parameter().setUserEdited(true);
         }
         effects.add("Set " + checked.size() + " validated parameter(s) on " + displayRef(command, "ref", node) + ".");
+    }
+
+    private static void configureNode(NodeGraphData graph, JsonObject command, Map<String, String> references,
+                                      JsonArray effects) {
+        if (nullableString(command, "mode") != null) {
+            NodeGraphData.NodeData node = resolveNode(graph, references, requiredReference(command, "ref"));
+            if (!requiredString(command, "mode").equals(node.getMode() == null ? "" : node.getMode().name())) {
+                List<NodeGraphData.ParameterData> previous = new ArrayList<>(safeParameters(node));
+                setMode(graph, command, references, effects);
+                for (NodeGraphData.ParameterData parameter : safeParameters(node)) {
+                    previous.stream().filter(old -> old != null && parameter.getId().equals(old.getId())
+                        && parameter.getType().equals(old.getType())).findFirst().ifPresent(old -> {
+                            parameter.setValue(old.getValue());
+                            parameter.setUserEdited(old.getUserEdited());
+                        });
+                }
+            }
+        }
+        if (!optionalArray(command, "parameterValues").isEmpty()) setParameters(graph, command, references, effects);
+        else if (nullableString(command, "mode") == null) throw new IllegalArgumentException("configure_node needs a mode or parameterValues.");
     }
 
     private static void setValidatedParameter(NodeGraphData.NodeData node, String parameterId, String value) {
@@ -899,6 +910,8 @@ public final class AiGraphCommandEngine {
             JsonObject command = element.getAsJsonObject();
             String ref = nullableString(command, "ref");
             if (ref != null && !ref.isBlank()) requestedRefs.add(ref);
+            String host = nullableString(command, "host");
+            if (host != null && !host.isBlank()) requestedRefs.add(host);
             if (command.has("refs") && command.get("refs").isJsonArray()) {
                 for (JsonElement value : command.getAsJsonArray("refs")) {
                     if (value.isJsonPrimitive()) requestedRefs.add(value.getAsString());
@@ -922,6 +935,10 @@ public final class AiGraphCommandEngine {
                 actual.addProperty("parameterId", parameter.getId());
                 actual.addProperty("type", parameter.getType());
                 actual.addProperty("value", parameter.getValue());
+                AiConfiguredValues.Value effective = AiConfiguredValues.read(graph, node, parameter.getId());
+                actual.addProperty("staticallyKnown", effective.staticallyKnown());
+                actual.addProperty("effectiveValue", effective.effective());
+                actual.addProperty("sourceNodeId", effective.sourceNodeId());
                 parameters.add(actual);
             }
             item.add("parameters", parameters);
@@ -974,6 +991,12 @@ public final class AiGraphCommandEngine {
     private static String requiredString(JsonObject object, String key) {
         String value = nullableString(object, key);
         if (value == null || value.isBlank()) throw new IllegalArgumentException("Graph command is missing '" + key + "'.");
+        return value;
+    }
+
+    private static String parameterValue(JsonObject object) {
+        String value = nullableString(object, "value");
+        if (value == null) throw new IllegalArgumentException("Parameter value is missing.");
         return value;
     }
 
