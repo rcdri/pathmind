@@ -13,6 +13,16 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AiRequestIntentTest {
+    @Test void clarificationCannotBeUsedToReturnAnEditDescriptionInsteadOfAQuestion() {
+        String user = "Extend this preset";
+        var advice = decision("finish", "undecided", "edit", user);
+        advice.addProperty("completion", "clarification");
+        advice.addProperty("completionReason", "Behavior missing"); advice.addProperty("response", "I should add another action.");
+        var question = advice.deepCopy(); question.addProperty("response", "What should happen after the current sequence?");
+        var report = run(new Script(advice, question), user, fixture());
+        assertTrue(report.succeeded(), report.error());
+        assertTrue(report.trace().stream().anyMatch(step -> step.code().equals("clarification_question_required")));
+    }
     private static final String EDIT = "make the preset: after it jumps, create a variable for the players current position, walk forward 5 blocks, then travel back to that position with pathfinding";
 
     @Test void oversizedOrdinaryReplyIsRejectedAndCorrectedReplyCanFinish() {

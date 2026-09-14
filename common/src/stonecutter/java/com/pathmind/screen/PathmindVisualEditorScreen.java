@@ -3506,7 +3506,15 @@ public class PathmindVisualEditorScreen extends Screen {
             presetWorkspaceController.activePresetName(), baritoneAvailable, uiUtilsAvailable);
         if (!proposalValidation.valid()) return "Error: the generated graph is invalid: " + proposalValidation.summary();
         String activePreset = presetWorkspaceController.activePresetName();
-        if (!nodeGraph.applyGraphDataSnapshot(proposal.graph(), true) || !saveRootPresetWorkspace()) return "Error: could not apply the update.";
+        var previous = nodeGraph.exportGraphDataSnapshot();
+        var outcome = com.pathmind.ai.AiApplyTransaction.apply(previous, proposal.graph(),
+            data -> nodeGraph.applyGraphDataSnapshot(data, true), this::saveRootPresetWorkspace);
+        if (outcome != com.pathmind.ai.AiApplyTransaction.Outcome.SAVED) {
+            resetWorkspaceTabsFromCurrentGraph();
+            return outcome == com.pathmind.ai.AiApplyTransaction.Outcome.REVERTED
+                ? "Error: could not apply/save the update. The previous editor graph was restored."
+                : "Error: saving failed and the previous graph could not be restored. The editor may contain unsaved changes; inspect it before closing.";
+        }
         resetWorkspaceTabsFromCurrentGraph();
         return "Updated " + activePreset + ".";
     }

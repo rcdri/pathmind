@@ -3,6 +3,10 @@ package com.pathmind.ai;
 import com.pathmind.data.NodeGraphData;
 import com.pathmind.nodes.NodeCatalog;
 import com.pathmind.nodes.NodeParameter;
+import com.pathmind.nodes.NodeParameterSemantics;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Objects;
 
 /** Conservative static readback: never evaluates sensors, variables or world-dependent reporters. */
 final class AiConfiguredValues {
@@ -13,18 +17,29 @@ final class AiConfiguredValues {
         String literal = literal(node, normalized);
         String value = literal;
         String source = node.getId();
-        if (node.getParameterAttachments() != null) for (var attachment : node.getParameterAttachments()) {
+        boolean known = true;
+        var attachments = node.getParameterAttachments() == null ? java.util.List.<NodeGraphData.ParameterAttachmentData>of()
+            : new ArrayList<>(node.getParameterAttachments());
+        attachments = attachments.stream().filter(Objects::nonNull)
+            .sorted(Comparator.comparingInt(NodeGraphData.ParameterAttachmentData::getSlotIndex)).toList();
+        for (var attachment : attachments) {
             if (attachment == null) continue;
             NodeGraphData.NodeData child = graph.getNodes().stream().filter(candidate -> candidate != null
-                && attachment.getParameterNodeId().equals(candidate.getId())).findFirst().orElse(null);
+                && Objects.equals(attachment.getParameterNodeId(), candidate.getId())).findFirst().orElse(null);
             if (child == null || !NodeCatalog.isLiteralValueSource(child.getType())
                 || (child.getParameterAttachments() != null && !child.getParameterAttachments().isEmpty())) {
-                return new Value(literal, null, "runtime input", false);
+                if (NodeParameterSemantics.uncertainInputKeys(node, attachment.getSlotIndex(), child).stream()
+                    .anyMatch(key -> normalized.equals(NodeParameter.createDefaultId(key)))) {
+                    known = false; value = null; source = attachment.getParameterNodeId();
+                }
+                continue;
             }
-            String exported = literal(child, normalized);
-            if (exported != null) { value = exported; source = child.getId(); }
+            var exported = NodeParameterSemantics.literalInput(node, attachment.getSlotIndex(), child);
+            for (var entry : exported.entrySet()) if (normalized.equals(NodeParameter.createDefaultId(entry.getKey()))) {
+                value = entry.getValue(); source = child.getId(); known = true;
+            }
         }
-        return new Value(literal, value, source, true);
+        return new Value(literal, value, source, known);
     }
 
     private static String literal(NodeGraphData.NodeData node, String id) {

@@ -11,6 +11,54 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AiParameterContractsTest {
+    @Test void validationIgnoresAnObsoleteHostLiteralWhenACorrectAttachedSourceOverridesIt() {
+        var created = AiGraphCommandEngine.apply(empty(), commands("""
+            [{"kind":"add_sequence","refs":["start","craft"],"nodeTypes":["START","CRAFT"]},
+             {"kind":"add_node","ref":"item","nodeType":"PARAM_ITEM"},
+             {"kind":"set_parameter","ref":"item","parameterId":"item","value":"minecraft:oak_planks"},
+             {"kind":"attach_parameter","host":"craft","child":"item","slotIndex":0}]
+            """), Map.of(), true, true);
+        assertTrue(created.success(), created.message());
+        var graph = NodeGraphPersistence.parseNodeGraphData(created.graph().toString());
+        var craft = graph.getNodes().stream().filter(n -> n.getType() == NodeType.CRAFT).findFirst().orElseThrow();
+        craft.getParameters().stream().filter(p -> "item".equals(p.getId())).findFirst().orElseThrow()
+            .setValue("minecraft:oak_planks,4");
+        var validation = AiPresetService.validateProposal(new AiPresetService.Proposal("Draft", "", java.util.List.of(), graph, "new"),
+            "Open", true, true);
+        assertTrue(validation.valid(), validation.summary());
+        assertEquals("minecraft:oak_planks", AiConfiguredValues.read(graph, craft, "item").effective());
+    }
+    @Test void runtimeRemappedRepeatCountIsSharedByReadbackPreviewAndCommands() {
+        var created = AiGraphCommandEngine.apply(empty(), commands("""
+            [{"kind":"add_node","ref":"repeat","nodeType":"CONTROL_REPEAT"},
+             {"kind":"add_node","ref":"amount","nodeType":"PARAM_AMOUNT"},
+             {"kind":"set_parameter","ref":"amount","parameterId":"amount","value":"3"}]
+            """), Map.of(), true, true);
+        assertTrue(created.success(), created.message());
+        var graph = NodeGraphPersistence.parseNodeGraphData(created.graph().toString());
+        var host = graph.getNodes().get(0);
+        host.setParameterAttachments(java.util.List.of(new NodeGraphData.ParameterAttachmentData(0, created.references().get("amount"))));
+        var actual = AiConfiguredValues.read(graph, host, "count");
+        assertEquals("3", actual.effective());
+        assertEquals(created.references().get("amount"), actual.sourceNodeId());
+        assertTrue(AiExecutionPreview.preview(graph).toString().contains("Count=3"));
+        var rejected = AiGraphCommandEngine.apply(new com.google.gson.Gson().toJsonTree(graph).getAsJsonObject(), commands("""
+            [{"kind":"set_parameter","ref":"repeat","parameterId":"count","value":"8"}]
+            """), created.references(), true, true);
+        assertEquals("parameter_overridden", rejected.errorCode());
+    }
+
+    @Test void numericDynamicInputDoesNotMakeAnUnrelatedIdentifierUnknown() {
+        var created = AiGraphCommandEngine.apply(empty(), commands("""
+            [{"kind":"add_node","ref":"craft","nodeType":"CRAFT"},
+             {"kind":"add_node","ref":"random","nodeType":"OPERATOR_RANDOM"},
+             {"kind":"attach_parameter","host":"craft","child":"random","slotIndex":0}]
+            """), Map.of(), true, true);
+        assertTrue(created.success(), created.message());
+        var graph = NodeGraphPersistence.parseNodeGraphData(created.graph().toString());
+        assertTrue(AiConfiguredValues.read(graph, graph.getNodes().get(0), "item").staticallyKnown());
+        assertFalse(AiConfiguredValues.read(graph, graph.getNodes().get(0), "amount").staticallyKnown());
+    }
     @Test void existingSparseHostReturnsAttachmentContextAndCanBeEditedWithoutChangingItsItem() {
         var created = AiGraphCommandEngine.apply(empty(), commands("""
             [{"kind":"add_node","ref":"craft","nodeType":"CRAFT"},

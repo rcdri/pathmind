@@ -18,6 +18,65 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AiPresetAgentTest {
+    @Test void bindsAnExistingRoutineNodeAndVerifiesAScopedEdit() {
+        var created = AiGraphCommandEngine.apply(JsonParser.parseString("{\"nodes\":[],\"connections\":[],\"routines\":[]}").getAsJsonObject(),
+            JsonParser.parseString("""
+                [{"kind":"add_sequence","refs":["start","wait","after"],"nodeTypes":["START","WAIT","JUMP"]},
+                 {"kind":"create_routine","refs":["wait"],"ref":"call","routineRef":"work","name":"Work","routineInputs":[]}]
+                """).getAsJsonArray(), java.util.Map.of(), true, true);
+        assertTrue(created.success(), created.message());
+        String routineId = created.references().get("work");
+        var inspect = JsonParser.parseString(action("inspect_subgraph", "current", null, List.of())).getAsJsonObject();
+        inspect.addProperty("graphRef", routineId); inspect.getAsJsonArray("nodeRefs").add(created.references().get("wait"));
+        var bind = JsonParser.parseString(action("bind_node_ref", "current", null, List.of())).getAsJsonObject();
+        bind.addProperty("graphRef", routineId); bind.addProperty("ref", "existing_wait"); bind.addProperty("nodeId", created.references().get("wait"));
+        var plan = JsonParser.parseString(planAction("current", "Change the routine wait", "WAIT")).getAsJsonObject();
+        var expected = requirement("existing_wait", "WAIT", "duration", "9"); expected.addProperty("graphRef", routineId);
+        plan.getAsJsonArray("planRequirements").add(expected);
+        var structure = JsonParser.parseString("{\"kind\":\"node\",\"ref\":\"existing_wait\",\"nodeType\":\"WAIT\"}").getAsJsonObject();
+        structure.addProperty("graphRef", routineId); JsonArray structures = new JsonArray(); structures.add(structure); plan.add("structuralRequirements", structures);
+        JsonObject edit = emptyCommand("set_parameter"); edit.addProperty("ref", "existing_wait"); edit.addProperty("parameterId", "duration");
+        edit.addProperty("value", "9"); edit.addProperty("graphRef", routineId); JsonArray edits = new JsonArray(); edits.add(edit);
+        var provider = new FakeProvider(inspect.toString(), bind.toString(), plan.toString(),
+            action("apply_graph_commands", "current", edits, List.of(), 0), action("validate_graph", "current", null, List.of(), 1),
+            action("finish", "current", null, List.of(), 1));
+        var proposal = AiPresetAgent.run(provider, "model", "Change the wait in this routine to 9 seconds", "",
+            com.pathmind.data.NodeGraphPersistence.parseNodeGraphData(created.graph().toString()), "Open", true, true).join();
+        assertTrue(proposal.editsCurrentPreset());
+        assertTrue(proposal.review().changes().stream().anyMatch(line -> line.contains("Duration=9")));
+        assertTrue(proposal.graph().getRoutines().get(0).getGraph().getNodes().stream().anyMatch(n -> n.getParameters() != null
+            && n.getParameters().stream().anyMatch(p -> "duration".equals(p.getId()) && "9".equals(p.getValue()))));
+    }
+    @Test void runtimeDependentRequirementsRemainVisibleWithoutBlockingReview() {
+        JsonObject plan = JsonParser.parseString(planAction("new", "Build a runtime-configured craft", "START", "CRAFT")).getAsJsonObject();
+        plan.getAsJsonArray("planRequirements").add(requirement("craft", "CRAFT", "Amount", "4"));
+        JsonArray commands = new JsonArray();
+        commands.add(addNode("start", "START")); commands.add(addNode("craft", "CRAFT"));
+        commands.add(connect("start", "craft", 0, 0)); commands.add(addNode("random", "OPERATOR_RANDOM"));
+        JsonObject attachment = emptyCommand("attach_parameter");
+        attachment.addProperty("host", "craft"); attachment.addProperty("child", "random");
+        attachment.addProperty("slotIndex", 0); commands.add(attachment);
+        FakeProvider provider = new FakeProvider(plan.toString(), action("apply_graph_commands", "new", commands, List.of(), 0),
+            action("validate_graph", "new", null, List.of(), 1), action("finish", "new", null, List.of(), 1));
+        var proposal = AiPresetAgent.run(provider, "model", "Build a runtime-configured craft", "", simpleGraph(), "Open", true, true).join();
+        assertTrue(proposal.changesGraph());
+        assertTrue(provider.requests.get(3).userPrompt().contains("requirement_runtime_dependent"));
+        assertTrue(provider.requests.get(3).userPrompt().contains("\"severity\":\"warning\""));
+        assertTrue(proposal.review().changes().stream().anyMatch(line -> line.contains("Amount=runtime-dependent")));
+    }
+    @Test void nativeAndFallbackProvidersReceiveTheSameBehavioralGuidance() {
+        FakeProvider fallback = new FakeProvider(action("inspect_preset", "inspect", null, List.of()), action("finish", "inspect", null, List.of()));
+        FakeProvider nativeProvider = new FakeProvider(action("inspect_preset", "inspect", null, List.of()), action("finish", "inspect", null, List.of())) {
+            @Override public AiProviderCapabilities capabilities() { return AiProviderCapabilities.NATIVE_TOOLS; }
+        };
+        AiPresetAgent.run(fallback, "model", "Explain the idea", "", simpleGraph(), "Open", true, true).join();
+        AiPresetAgent.run(nativeProvider, "model", "Explain the idea", "", simpleGraph(), "Open", true, true).join();
+        for (String guidance : List.of("sourceNodeId", "planRequirements", "Internal validation", "Runtime-dependent requirements")) {
+            assertTrue(fallback.requests.getFirst().systemPrompt().contains(guidance));
+            assertTrue(nativeProvider.requests.getFirst().systemPrompt().contains(guidance));
+        }
+        assertFalse(nativeProvider.requests.getFirst().systemPrompt().contains("target is never null"));
+    }
     @Test
     void actionSchemaRequiresANonNullTarget() {
         JsonObject properties = AiAgentTurnSchema.create().getAsJsonObject("properties");

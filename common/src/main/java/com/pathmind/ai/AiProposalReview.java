@@ -30,6 +30,16 @@ public record AiProposalReview(List<String> changes, List<String> executionPaths
         }
         diffSet(changes, connections(before), connections(after), "connection");
         diffSet(changes, attachments(before), attachments(after), "attachment");
+        Map<String, NodeGraphData.RoutineDefinitionData> oldRoutines = routines(before), newRoutines = routines(after);
+        for (var entry : newRoutines.entrySet()) {
+            var old = oldRoutines.get(entry.getKey());
+            var current = entry.getValue();
+            if (old != null && GSON.toJson(old).equals(GSON.toJson(current))) continue;
+            add(changes, (old == null ? "+" : "~") + " routine " + current.getName() + " [" + current.getId() + "]");
+            if (current.getGraph() != null) for (String line : create(old == null ? null : old.getGraph(), current.getGraph()).changes())
+                add(changes, "  " + line);
+        }
+        for (var old : oldRoutines.entrySet()) if (!newRoutines.containsKey(old.getKey())) add(changes, "− routine " + old.getValue().getName());
         if (changes.isEmpty()) changes.add("No serialized graph changes.");
 
         List<String> paths = new ArrayList<>();
@@ -50,6 +60,13 @@ public record AiProposalReview(List<String> changes, List<String> executionPaths
             lines.addAll(executionPaths);
         }
         return List.copyOf(lines);
+    }
+
+    private static Map<String, NodeGraphData.RoutineDefinitionData> routines(NodeGraphData graph) {
+        Map<String, NodeGraphData.RoutineDefinitionData> result = new LinkedHashMap<>();
+        if (graph != null && graph.getRoutines() != null) for (var routine : graph.getRoutines())
+            if (routine != null) result.put(routine.getId(), routine);
+        return result;
     }
 
     private static Map<String, NodeGraphData.NodeData> nodes(NodeGraphData graph) {
@@ -104,7 +121,7 @@ public record AiProposalReview(List<String> changes, List<String> executionPaths
         if (node.getMode() != null) values.add("mode=" + node.getMode().name());
         if (node.getParameters() != null) for (NodeGraphData.ParameterData parameter : node.getParameters()) {
             if (parameter != null) {
-                AiConfiguredValues.Value actual = AiConfiguredValues.read(graph, node, parameter.getId());
+                AiConfiguredValues.Value actual = AiConfiguredValues.read(graph, node, AiConfiguredValues.parameterId(parameter));
                 values.add(parameter.getName() + "=" + (actual.staticallyKnown() ? actual.effective() : "runtime-dependent")
                     + (actual.staticallyKnown() && !node.getId().equals(actual.sourceNodeId())
                         ? " (from " + actual.sourceNodeId() + ")" : ""));

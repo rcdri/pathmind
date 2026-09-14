@@ -28,6 +28,11 @@ public final class AiChatHistoryStore {
     private final EnumMap<AiProviderType, List<String>> changeRecords = new EnumMap<>(AiProviderType.class);
     private boolean unreadable;
     private String warning = "";
+    private static final java.util.concurrent.ScheduledExecutorService SAVER = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "pathmind-ai-history-save"); thread.setDaemon(true); return thread;
+    });
+    private java.util.concurrent.ScheduledFuture<?> pendingSave;
+    private boolean dirty;
 
     public static synchronized AiChatHistoryStore open(Path directory) {
         Path file = directory.toAbsolutePath().normalize().resolve("ai-chat-history.json");
@@ -98,8 +103,18 @@ public final class AiChatHistoryStore {
         histories.computeIfAbsent(provider, ignored -> new ArrayList<>()).add(new Entry(role, text, System.currentTimeMillis()));
         revisions.merge(provider, 1L, Long::sum);
         if (unreadable) return; // Never overwrite an unreadable archive implicitly.
-        persist();
+        dirty = true;
+        if (role != Role.DETAIL) { flush(); return; }
+        if (pendingSave == null || pendingSave.isDone()) pendingSave = SAVER.schedule(() -> {
+            synchronized (this) {
+                pendingSave = null;
+                try { flush(); }
+                catch (IllegalStateException failure) { warning = failure.getMessage(); }
+            }
+        }, 250, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
+
+    public synchronized void flush() { if (dirty && !unreadable) { persist(); dirty = false; warning = ""; } }
 
     /** Reset only the selected provider. Back up unreadable data before an explicit reset. */
     public synchronized void reset(AiProviderType provider) {
@@ -181,6 +196,7 @@ public final class AiChatHistoryStore {
             Files.writeString(temp, GSON.toJson(root));
             try { Files.move(temp, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
             catch (java.nio.file.AtomicMoveNotSupportedException ignored) { Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING); }
+            dirty = false;
         } catch (IOException failure) {
             throw new IllegalStateException("AI history could not be saved locally.");
         } finally {

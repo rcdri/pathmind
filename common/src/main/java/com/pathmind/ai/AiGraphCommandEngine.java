@@ -52,7 +52,12 @@ public final class AiGraphCommandEngine {
             JsonArray effects = new JsonArray();
             for (JsonElement element : commands) {
                 if (!element.isJsonObject()) throw new IllegalArgumentException("Every graph command must be an object.");
-                applyOne(draft, element.getAsJsonObject(), references, effects, baritoneAvailable, uiUtilsAvailable);
+                JsonObject command = element.getAsJsonObject();
+                NodeGraphData scope = AiGraphScope.resolve(draft, nullableString(command, "graphRef"), references);
+                if (scope != draft && "create_routine".equals(nullableString(command, "kind")))
+                    throw new IllegalArgumentException("Create routine definitions in the root graph; graphRef supports editing bodies and adding calls to existing root routines.");
+                if ("add_routine_call".equals(nullableString(command, "kind"))) addRoutineCall(scope, draft, command, references, effects);
+                else applyOne(scope, command, references, effects, baritoneAvailable, uiUtilsAvailable);
             }
             return new Result(true, GSON.toJsonTree(draft).getAsJsonObject(), Map.copyOf(references), effects,
                 parameterReadback(draft, commands, references), "", false,
@@ -204,7 +209,7 @@ public final class AiGraphCommandEngine {
                 + "'. Inspect its instance parameters and parameterAttachments, not just its type contract. "
                 + "Configure the attached value source by its own ref when it supplies this input."));
         AiConfiguredValues.Value effective = AiConfiguredValues.read(graph, node, normalized);
-        if (effective.staticallyKnown() && !node.getId().equals(effective.sourceNodeId())) {
+        if (!node.getId().equals(effective.sourceNodeId())) {
             throw new CommandFailure("parameter_overridden", true, "Parameter '" + normalized + "' on "
                 + node.getId() + " is supplied by attached node " + effective.sourceNodeId()
                 + ". Configure that node by its own ref; changing the host literal would not change execution.");
@@ -627,7 +632,7 @@ public final class AiGraphCommandEngine {
             && (selectedIds.contains(edge.getOutputNodeId()) || selectedIds.contains(edge.getInputNodeId())));
         graph.getNodes().removeIf(node -> node != null && selectedIds.contains(node.getId()));
         cleanupRelationships(graph, selectedIds);
-        references.entrySet().removeIf(referenceEntry -> selectedIds.contains(referenceEntry.getValue()));
+        // Body IDs are retained: aliases remain usable with the new routine graphRef.
         if (boundary.incoming() != null) graph.getConnections().add(new NodeGraphData.ConnectionData(
             boundary.incoming().getOutputNodeId(), callData.getId(), boundary.incoming().getOutputSocket(), 0));
         if (boundary.outgoing() != null) graph.getConnections().add(new NodeGraphData.ConnectionData(
@@ -638,9 +643,14 @@ public final class AiGraphCommandEngine {
 
     private static void addRoutineCall(NodeGraphData graph, JsonObject command, Map<String, String> references,
                                        JsonArray effects) {
+        addRoutineCall(graph, graph, command, references, effects);
+    }
+
+    private static void addRoutineCall(NodeGraphData graph, NodeGraphData registry, JsonObject command, Map<String, String> references,
+                                       JsonArray effects) {
         String routineRef = requiredReference(command, "routineRef");
         String routineId = references.getOrDefault(routineRef, routineRef);
-        NodeGraphData.RoutineDefinitionData routine = graph.getRoutines().stream()
+        NodeGraphData.RoutineDefinitionData routine = registry.getRoutines().stream()
             .filter(item -> item != null && routineId.equals(item.getId())).findFirst()
             .orElseThrow(() -> new IllegalArgumentException("Unknown routine reference '" + routineRef + "'."));
         String callRef = requiredReference(command, "ref");
@@ -733,7 +743,7 @@ public final class AiGraphCommandEngine {
         for (NodeGraphData.RoutineDefinitionData routine : graph.getRoutines()) {
             if (routine != null && routine.getId() != null) routineIds.add(routine.getId());
         }
-        references.entrySet().removeIf(entry -> findNode(graph, entry.getValue()) == null
+        references.entrySet().removeIf(entry -> AiGraphScope.containing(graph, entry.getValue()) == null
             && !routineIds.contains(entry.getValue()));
     }
 
@@ -929,7 +939,8 @@ public final class AiGraphCommandEngine {
         JsonArray readback = new JsonArray();
         for (String ref : requestedRefs) {
             if (readback.size() >= 24) break;
-            NodeGraphData.NodeData node = findNode(graph, references.getOrDefault(ref, ref));
+            NodeGraphData scope = AiGraphScope.containing(graph, references.getOrDefault(ref, ref));
+            NodeGraphData.NodeData node = scope == null ? null : findNode(scope, references.getOrDefault(ref, ref));
             if (node == null) continue;
             if (safeParameters(node).isEmpty()) continue;
             JsonObject item = new JsonObject();
@@ -943,7 +954,7 @@ public final class AiGraphCommandEngine {
                 actual.addProperty("parameterId", AiConfiguredValues.parameterId(parameter));
                 actual.addProperty("type", parameter.getType());
                 actual.addProperty("value", parameter.getValue());
-                AiConfiguredValues.Value effective = AiConfiguredValues.read(graph, node, AiConfiguredValues.parameterId(parameter));
+                AiConfiguredValues.Value effective = AiConfiguredValues.read(scope, node, AiConfiguredValues.parameterId(parameter));
                 actual.addProperty("staticallyKnown", effective.staticallyKnown());
                 actual.addProperty("effectiveValue", effective.effective());
                 actual.addProperty("sourceNodeId", effective.sourceNodeId());

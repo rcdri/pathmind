@@ -1770,18 +1770,25 @@ public class NodeGraphPersistence {
     }
 
     private static boolean writeNodeGraphDataToPath(NodeGraphData data, Path savePath) {
+        Path temporary = null;
         try {
             sanitizeRoutineDefinitions(data);
-            if (savePath.getParent() != null) {
-                Files.createDirectories(savePath.getParent());
-            }
-            try (Writer writer = Files.newBufferedWriter(savePath)) {
+            Path destination = savePath.toAbsolutePath();
+            Files.createDirectories(destination.getParent());
+            temporary = Files.createTempFile(destination.getParent(), "pathmind-preset-", ".tmp");
+            try (Writer writer = Files.newBufferedWriter(temporary)) {
                 GSON.toJson(data, writer);
+            }
+            try { Files.move(temporary, destination, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING); }
+            catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+                Files.move(temporary, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
             return true;
         } catch (Exception e) {
             System.err.println("Failed to save node graph: " + e.getMessage());
             return false;
+        } finally {
+            if (temporary != null) try { Files.deleteIfExists(temporary); } catch (java.io.IOException ignored) { }
         }
     }
 }

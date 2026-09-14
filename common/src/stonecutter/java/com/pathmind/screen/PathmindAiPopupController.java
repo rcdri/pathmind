@@ -438,7 +438,7 @@ final class PathmindAiPopupController {
         cancelledControl.cancel();
         if (record) appendHistory(provider, Role.EVENT, status);
     }
-    void dispose() { stopWork(true); close(); }
+    void dispose() { stopWork(true); try { conversationHistory.flush(); } catch (IllegalStateException failure) { host.showAiError(failure.getMessage()); } close(); }
     private int chatRowHeight() { return (currentFont == null ? 9 : currentFont.lineHeight) + 3; }
     private int chatTopY() { return y + HEADER + 25; }
     private int chatBottomY() {

@@ -87,7 +87,7 @@ public final class AiExecutionPreview {
 
     private static String label(NodeGraphData.NodeData node, Context context, Set<String> visiting,
                                 Set<String> routineStack, int depth) {
-        String result = baseLabel(node);
+        String result = baseLabel(node, context);
         if (depth >= MAX_INLINE_DEPTH || !visiting.add(node.getId())) return result + " ↻";
         if (present(node.getAttachedSensorId())) result += " ? { "
             + attachedValue(node.getAttachedSensorId(), context, visiting, routineStack, depth + 1) + " }";
@@ -199,13 +199,22 @@ public final class AiExecutionPreview {
     }
 
     private static String baseLabel(NodeGraphData.NodeData node) {
+        return baseLabel(node, null);
+    }
+
+    private static String baseLabel(NodeGraphData.NodeData node, Context context) {
         String label = node.getType() == null ? "Unknown" : NodeCatalog.displayName(node.getType());
         if (node.getMode() != null) label += " (" + node.getMode().getDisplayName() + ")";
         if (node.getParameters() != null) {
             List<String> parameters = new ArrayList<>();
+            NodeGraphData scope = new NodeGraphData();
+            scope.setNodes(context == null ? List.of(node) : new ArrayList<>(context.nodes().values()));
             node.getParameters().forEach(value -> {
-                if (value != null && present(value.getValue())) parameters.add(
-                    (value.getName() == null ? value.getId() : value.getName()) + "=" + value.getValue());
+                if (value != null && present(value.getValue())) {
+                    var configured = context == null ? null : AiConfiguredValues.read(scope, node, AiConfiguredValues.parameterId(value));
+                    parameters.add((value.getName() == null ? value.getId() : value.getName()) + "="
+                        + (configured == null ? value.getValue() : configured.staticallyKnown() ? configured.effective() : "runtime-dependent"));
+                }
             });
             if (!parameters.isEmpty()) label += " (" + String.join(", ", parameters) + ")";
         }

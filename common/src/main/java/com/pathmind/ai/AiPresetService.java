@@ -128,6 +128,8 @@ public final class AiPresetService {
                 var definition = specimen.getParameters().stream().filter(candidate -> id.equals(candidate.getId()))
                     .findFirst().orElse(null);
                 if (definition == null) continue; // Dynamic runtime interfaces are validated by the runtime validator.
+                var configured = AiConfiguredValues.read(graph, node, id);
+                if (!node.getId().equals(configured.sourceNodeId())) continue; // Shadowed literals do not execute.
                 if (parameter.getValue().isBlank() && !Boolean.TRUE.equals(parameter.getUserEdited())) continue;
                 try { definition.getValueContract().validate(definition.getType(), parameter.getValue()); }
                 catch (IllegalArgumentException failure) {

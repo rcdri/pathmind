@@ -17,6 +17,7 @@ public final class AiAgentTurnSchema {
             property("value", described(string(), "Typed parameter value serialized as text."))
         );
         JsonObject planRequirement = object(
+            property("graphRef", nullable(string())),
             property("ref", described(string(), "Node alias the plan will create or edit.")),
             property("nodeType", described(enumValues(NodeType.values()), "Expected node type for the alias.")),
             property("mode", described(nullable(enumValues(NodeMode.values())), "Expected mode for mode-specific parameter requirements, or null for the default.")),
@@ -32,6 +33,7 @@ public final class AiAgentTurnSchema {
             property("slotIndex", described(nullable(integer()), "Body parameter slot used with bindToRef."))
         );
         JsonObject command = object(
+            property("graphRef", described(nullable(string()), "Routine graph ID/alias, or null for root. Command refs resolve within this graph.")),
             property("kind", described(enumString("add_node", "set_mode", "set_parameter", "set_parameters", "configure_node", "connect",
                 "disconnect", "attach_action", "attach_sensor", "attach_parameter", "detach_action",
                 "detach_sensor", "detach_parameter", "remove_node", "add_sequence", "insert_sequence_after",
@@ -67,7 +69,8 @@ public final class AiAgentTurnSchema {
         return object(
             property("tool", enumString("assess_request", "select_target", "inspect_preset", "list_node_types", "describe_node_types",
                 "list_examples", "inspect_example", "find_nodes", "inspect_subgraph", "apply_graph_commands",
-                "plan_graph", "validate_graph", "preview_execution", "finish")),
+                "plan_graph", "validate_graph", "preview_execution", "finish", "bind_node_ref")),
+            property("graphRef", nullable(string())), property("ref", nullable(string())), property("nodeId", nullable(string())),
             property("target", enumString("new", "current", "inspect", "undecided")),
             property("requestIntent", described(nullable(enumString("discuss", "diagnose", "build", "edit", "clarify")), "Classify the latest request separately from graph scope. Set on the first useful call; null afterwards.")),
             property("intentEvidence", described(nullable(string()), "Exact quote from the latest USER_REQUEST supporting intent, never historical context.")),
@@ -80,6 +83,11 @@ public final class AiAgentTurnSchema {
                 "High-level structures the plan expects to build or edit.")),
             property("planAssumptions", described(array(string()), "At most four user-visible assumptions that affect graph structure.")),
             property("planRequirements", described(array(planRequirement), "Machine-readable final parameter values explicitly required by the user. Use one entry per required node parameter; do not encode multiple values in one string.")),
+            property("structuralRequirements", array(object(
+                property("kind", enumString("node", "flow", "action", "sensor", "parameter")),
+                property("graphRef", nullable(string())), property("ref", string()), property("toRef", nullable(string())),
+                property("nodeType", nullable(enumValues(NodeType.values()))), property("outputSocket", nullable(integer())),
+                property("inputSocket", nullable(integer())), property("slotIndex", nullable(integer()))))),
             property("nodeTypes", array(enumValues(NodeType.values()))),
             property("exampleTraits", described(array(enumValues(AiExampleTrait.values())),
                 "Structural traits used to retrieve only relevant golden examples.")),
@@ -93,7 +101,7 @@ public final class AiAgentTurnSchema {
             property("response", described(nullable(string()), "User-visible reply: default 1-3 short plain-language sentences, usually under 60 words. State the answer/proposed change and essential caveat only. Do not duplicate tool logs or execution previews. Expand only when the user asks for detail or an important limitation requires it.")),
             property("completion", described(nullable(enumString("complete", "clarification", "blocked")), "finish: answer or validated proposal, clarification question, or specific blocker. Null means complete.")),
             property("completionReason", described(nullable(string()), "For clarification: identify essential missing information and why the latest reply, earlier user messages and workspace do not already resolve it. Do not re-ask answered questions. For blocked: explain the confirmed tool failure. Inspect is never itself a blocker.")),
-            property("blockingToolTurn", described(nullable(integer()), "For blocked, cite an actual prior failed tool turn confirming missing context/capability or failed validation. Recoverable graph-command and permission/scope errors do not establish inability.")),
+            property("blockingToolTurn", described(nullable(integer()), "For blocked, cite a prior failed tool turn with context_unavailable or capability_unavailable. Validation, reference, command, and permission/scope errors are internal repair failures, not genuine blockers.")),
             property("workLog", array(string()))
         );
     }

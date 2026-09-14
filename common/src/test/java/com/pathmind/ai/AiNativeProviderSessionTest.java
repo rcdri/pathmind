@@ -118,7 +118,8 @@ class AiNativeProviderSessionTest {
                     .getAsJsonObject("items").getAsJsonArray("anyOf");
                 assertTrue(alternatives.size() > 20);
                 var addNode = alternatives.get(0).getAsJsonObject().getAsJsonObject("properties");
-                assertEquals(3, addNode.size());
+                assertEquals(4, addNode.size());
+                assertTrue(addNode.has("graphRef"));
                 assertFalse(addNode.has("routineInputs"));
                 assertFalse(addNode.has("x"));
             }

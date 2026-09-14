@@ -1879,7 +1879,7 @@ public class Node {
         return parameterValues.applyParameterValuesFromMap(values);
     }
 
-    Map<String, String> adjustParameterValuesForSlot(Map<String, String> values, int slotIndex, Node parameterNode) {
+    public Map<String, String> adjustParameterValuesForSlot(Map<String, String> values, int slotIndex, Node parameterNode) {
         return parameterValues.adjustParameterValuesForSlot(values, slotIndex, parameterNode);
     }
 
