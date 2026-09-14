@@ -47,8 +47,7 @@ public final class AiPresetService {
                                                        NodeGraphData activeGraph, String activePresetName, String conversation) {
         AiProvider configured = AiProviderRegistry.configured(provider)
             .orElseThrow(() -> new IllegalStateException("Configure and enable an AI provider in Settings first."));
-        String routedModel = AiModelRouter.resolve(provider, model, prompt, activeGraph);
-        return AiPresetAgent.run(configured, routedModel, prompt, conversation, activeGraph, activePresetName,
+        return AiPresetAgent.run(configured, model, prompt, conversation, activeGraph, activePresetName,
             baritoneAvailable, uiUtilsAvailable);
     }
 
@@ -58,8 +57,7 @@ public final class AiPresetService {
                                                        AiRequestControl control) {
         AiProvider configured = AiProviderRegistry.configured(provider)
             .orElseThrow(() -> new IllegalStateException("Configure and enable an AI provider in Settings first."));
-        String routedModel = AiModelRouter.resolve(provider, model, prompt, activeGraph);
-        return AiPresetAgent.run(configured, routedModel, prompt, conversation, activeGraph, activePresetName,
+        return AiPresetAgent.run(configured, model, prompt, conversation, activeGraph, activePresetName,
             baritoneAvailable, uiUtilsAvailable, control);
     }
 

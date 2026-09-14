@@ -112,19 +112,16 @@ bounded context budget; see [request lifecycle](ai-request-lifecycle.md) for the
 The current prompt is sent once, and fresh live-preset inspection remains
 authoritative; historical proposals do not imply that edits were accepted.
 
-## Model routing and remaining evidence-dependent work
+## Model selection and remaining evidence-dependent work
 
-OpenAI's `Auto` option routes short, simple requests to `gpt-5.4-mini` and structurally
-complex requests to `gpt-5.5` using a small deterministic request/graph complexity
-score. An explicit model selection always wins. Supported GPT-5.4/5.5 requests also
-set low text verbosity; Pathmind independently enforces a concise reply budget unless
-the user explicitly asks for detail.
+The saved model selector is the single source of truth. Pathmind does not silently
+route requests to another model based on prompt or graph complexity. Supported
+GPT-5.4/5.5 requests set low text verbosity; Pathmind independently enforces a concise
+reply budget unless the user explicitly asks for detail.
 
-This routing policy is covered by deterministic tests, but its provider quality,
-latency, and cost advantage remains unmeasured. Run matched live benchmarks with both
-models, repeat to check variance, and compare graph pass rate, tool turns, latency,
-and cost. Adjust the threshold only from those results. Offline tests make no measured
-provider-quality claim.
+Run matched live benchmarks before changing the default or recommended model. Compare
+graph pass rate, tool turns, latency, and cost across identical cases and repeated
+runs. Offline tests make no measured provider-quality claim.
 
 See [Pass 4 verification](ai-pass-4-verification.md) for targeted benchmarks, offline
 evidence, and outstanding world/UI checks.
