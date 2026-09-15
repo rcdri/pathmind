@@ -3635,6 +3635,7 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private boolean renderAiButton(GuiGraphics context, int mouseX, int mouseY, boolean disabled) {
+        if (!Boolean.TRUE.equals(settingsPopupController.settings().experimentalAiPresetCreation)) return false;
         return renderWorkspaceIconButton(context, getAiButtonX(), getSettingsButtonY(), mouseX, mouseY,
             aiPopupController.isVisible(), disabled, "ai-preset-button", PathmindWorkspaceChrome::drawSparkleIcon);
     }
@@ -3736,7 +3737,7 @@ public class PathmindVisualEditorScreen extends Screen {
     }
 
     private boolean isAiButtonClicked(int mouseX, int mouseY, int button) {
-        return button == 0
+        return Boolean.TRUE.equals(settingsPopupController.settings().experimentalAiPresetCreation) && button == 0
             && PathmindWorkspaceChrome.contains(mouseX, mouseY, getAiButtonX(), getSettingsButtonY(), BOTTOM_BUTTON_SIZE, BOTTOM_BUTTON_SIZE);
     }
 

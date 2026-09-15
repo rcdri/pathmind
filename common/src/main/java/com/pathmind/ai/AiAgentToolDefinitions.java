@@ -24,7 +24,7 @@ public final class AiAgentToolDefinitions {
         add(tools, envelope, "inspect_subgraph", "Inspect only nodeRefs and a bounded radius (0 to 3). Prefer focused queries when repairing.", "nodeRefs", "radius", "graphRef");
         add(tools, envelope, "bind_node_ref", "Bind an alias to an inspected existing node ID in graphRef. Does not edit or grant permissions. Use before requirements for existing nodes.", "ref", "nodeId", "graphRef");
         add(tools, envelope, "plan_graph", "Record a concise outcome and 1-8 structural steps before the first edit. No hidden reasoning.",
-            "planGoal", "planSteps", "planNodeTypes", "planStructures", "planAssumptions", "planRequirements", "structuralRequirements");
+            "planGoal", "planSteps", "planNodeTypes", "planStructures", "planAssumptions", "planRequirements", "structuralRequirements", "planCorrectionReason");
         JsonObject commands = envelope.getAsJsonObject("commands").deepCopy();
         commands.add("items", commandSchema(envelope.getAsJsonObject("commands").getAsJsonObject("items").getAsJsonObject("properties")));
         envelope.add("commands", commands);

@@ -101,6 +101,18 @@ final class NodeInventorySensorEvaluator {
         return matchesItem && (!useAmount || stack.getCount() >= requiredAmount);
     }
 
+    boolean evaluateSlotFilled() {
+        Node slotNode = owner.resolveSensorParameterNode(owner.getAttachedParameter(0), 0);
+        if (slotNode == null || !owner.providesTrait(slotNode, NodeValueTrait.INVENTORY_SLOT)) {
+            Minecraft client = Minecraft.getInstance();
+            if (client != null) {
+                owner.sendNodeErrorMessage(client, tr("pathmind.error.requiresInventorySlotParameter", owner.getType().getDisplayName()));
+            }
+            return false;
+        }
+        return owner.resolveInventorySlotCount(slotNode).orElse(0) > 0;
+    }
+
     boolean evaluateSlotItemCount() {
         Node slotNode = owner.resolveSensorParameterNode(owner.getAttachedParameter(0), 0);
         if (slotNode == null || !owner.providesTrait(slotNode, NodeValueTrait.INVENTORY_SLOT)) {

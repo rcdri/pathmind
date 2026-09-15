@@ -348,6 +348,7 @@ public final class NodeCatalog {
             NodeType.SENSOR_HUNGER_BELOW,
             NodeType.SENSOR_ITEM_IN_INVENTORY,
             NodeType.SENSOR_ITEM_IN_SLOT,
+            NodeType.SENSOR_SLOT_FILLED,
             NodeType.SENSOR_VILLAGER_TRADE,
             NodeType.SENSOR_IN_STOCK,
             NodeType.SENSOR_IS_SWIMMING,
@@ -415,6 +416,7 @@ public final class NodeCatalog {
             NodeType.SENSOR_DISTANCE_BETWEEN,
             NodeType.SENSOR_ITEM_IN_INVENTORY,
             NodeType.SENSOR_ITEM_IN_SLOT,
+            NodeType.SENSOR_SLOT_FILLED,
             NodeType.SENSOR_SLOT_ITEM_COUNT,
             NodeType.SENSOR_DURABILITY_OF,
             NodeType.SENSOR_ATTRIBUTE_DETECTION,
@@ -801,6 +803,7 @@ public final class NodeCatalog {
         parameterHost(NodeType.SENSOR_AT_COORDINATES, NodeValueTrait.COORDINATE);
         parameterHost(NodeType.SENSOR_ITEM_IN_INVENTORY, NodeValueTrait.ITEM, NodeValueTrait.NUMBER);
         parameterHost(NodeType.SENSOR_ITEM_IN_SLOT, slot("Item", true, NodeValueTrait.ITEM), slot("Selection", true, NodeValueTrait.INVENTORY_SLOT));
+        parameterHost(NodeType.SENSOR_SLOT_FILLED, "Slot", NodeValueTrait.INVENTORY_SLOT);
         parameterHost(NodeType.SENSOR_SLOT_ITEM_COUNT, "Slot", NodeValueTrait.INVENTORY_SLOT);
         parameterHost(NodeType.SENSOR_DURABILITY_OF, "Slot", NodeValueTrait.INVENTORY_SLOT);
         parameterHost(NodeType.SENSOR_ATTRIBUTE_DETECTION, "Target", NodeValueTrait.ENTITY, NodeValueTrait.PLAYER, NodeValueTrait.ITEM);
@@ -1214,6 +1217,7 @@ public final class NodeCatalog {
             NodeType.SENSOR_HUNGER_BELOW,
             NodeType.SENSOR_ITEM_IN_INVENTORY,
             NodeType.SENSOR_ITEM_IN_SLOT,
+            NodeType.SENSOR_SLOT_FILLED,
             NodeType.SENSOR_DURABILITY_OF,
             NodeType.SENSOR_FIND_TRADE,
             NodeType.SENSOR_VILLAGER_TRADE,
@@ -1577,6 +1581,7 @@ public final class NodeCatalog {
             case SENSOR_HUNGER_BELOW -> "pathmind.node.type.sensorHungerBelow";
             case SENSOR_ITEM_IN_INVENTORY -> "pathmind.node.type.sensorItemInInventory";
             case SENSOR_ITEM_IN_SLOT -> "pathmind.node.type.sensorItemInSlot";
+            case SENSOR_SLOT_FILLED -> "pathmind.node.type.sensorSlotFilled";
             case SENSOR_SLOT_ITEM_COUNT -> "pathmind.node.type.sensorSlotItemCount";
             case SENSOR_DURABILITY_OF -> "pathmind.node.type.sensorDurabilityOf";
             case SENSOR_FIND_TRADE -> "pathmind.node.type.sensorFindTrade";
@@ -1730,6 +1735,7 @@ public final class NodeCatalog {
             case SENSOR_HUNGER_BELOW -> "pathmind.node.type.sensorHungerBelow.desc";
             case SENSOR_ITEM_IN_INVENTORY -> "pathmind.node.type.sensorItemInInventory.desc";
             case SENSOR_ITEM_IN_SLOT -> "pathmind.node.type.sensorItemInSlot.desc";
+            case SENSOR_SLOT_FILLED -> "pathmind.node.type.sensorSlotFilled.desc";
             case SENSOR_SLOT_ITEM_COUNT -> "pathmind.node.type.sensorSlotItemCount.desc";
             case SENSOR_DURABILITY_OF -> "pathmind.node.type.sensorDurabilityOf.desc";
             case SENSOR_FIND_TRADE -> "pathmind.node.type.sensorFindTrade.desc";
@@ -1881,6 +1887,7 @@ public final class NodeCatalog {
             case SENSOR_HUNGER_BELOW -> 0xFF64B5F6;
             case SENSOR_ITEM_IN_INVENTORY -> 0xFF64B5F6;
             case SENSOR_ITEM_IN_SLOT -> 0xFF64B5F6;
+            case SENSOR_SLOT_FILLED -> 0xFF64B5F6;
             case SENSOR_SLOT_ITEM_COUNT -> 0xFF64B5F6;
             case SENSOR_DURABILITY_OF -> 0xFF64B5F6;
             case SENSOR_FIND_TRADE -> 0xFF64B5F6;

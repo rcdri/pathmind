@@ -23,6 +23,34 @@ class AiPassTwoTest {
              {"kind":"create_routine","refs":["wait"],"ref":"call","routineRef":"work","name":"Work","routineInputs":[]}]
             """), Map.of(), true, true);
     }
+    @Test void planCorrectionCanRepairBindingsButCannotWeakenBehavior() {
+        JsonObject before = JsonParser.parseString("""
+            {"requirements":[{"ref":"wrong","nodeType":"CRAFT","parameterId":"amount","value":"8"}],
+             "structuralRequirements":[{"kind":"parameter","ref":"wrong","toRef":"source","slotIndex":1}]}
+            """).getAsJsonObject();
+        JsonObject corrected = JsonParser.parseString("""
+            {"requirements":[{"ref":"craft","nodeType":"CRAFT","parameterId":"amount","value":"8"}],
+             "structuralRequirements":[{"kind":"parameter","ref":"craft","toRef":"amount","slotIndex":0}]}
+            """).getAsJsonObject();
+        JsonObject weakened = JsonParser.parseString("""
+            {"requirements":[],"structuralRequirements":[]}
+            """).getAsJsonObject();
+        assertTrue(AiPlanCorrection.preservesBehavior(before, corrected));
+        assertFalse(AiPlanCorrection.preservesBehavior(before, weakened));
+    }
+
+    @Test void recurringValidationFailuresSurviveDraftRevisionChanges() {
+        AiProgressTracker tracker = new AiProgressTracker();
+        JsonObject failed = JsonParser.parseString("""
+            {"ok":false,"message":"repair","issues":[{"code":"same","message":"same issue"}],"draftRevision":1}
+            """).getAsJsonObject();
+        assertEquals(0, tracker.record("validate_graph", failed, 1));
+        failed.addProperty("draftRevision", 2);
+        assertEquals(1, tracker.record("validate_graph", failed, 2));
+        failed.addProperty("message", "cosmetic wording");
+        failed.addProperty("draftRevision", 3);
+        assertEquals(2, tracker.record("validate_graph", failed, 3));
+    }
     @Test void editsExtractedRoutineWithoutTouchingRootAndKeepsBodyReferences() {
         var created = routine(); assertTrue(created.success(), created.message());
         assertTrue(created.references().containsKey("wait"));

@@ -64,6 +64,7 @@ final class NodeSensorCoordinator {
             case SENSOR_HUNGER_BELOW -> basicSensorEvaluator().evaluateHungerBelow();
             case SENSOR_ITEM_IN_INVENTORY -> inventorySensorEvaluator().evaluateItemInInventory();
             case SENSOR_ITEM_IN_SLOT -> inventorySensorEvaluator().evaluateItemInSlot();
+            case SENSOR_SLOT_FILLED -> inventorySensorEvaluator().evaluateSlotFilled();
             case SENSOR_SLOT_ITEM_COUNT -> inventorySensorEvaluator().evaluateSlotItemCount();
             case SENSOR_DURABILITY_OF -> inventorySensorEvaluator().evaluateDurabilityOf();
             case SENSOR_IS_SWIMMING -> playerStateSensorEvaluator().isSwimming();

@@ -37,6 +37,7 @@ public final class SettingsManager {
         public String accentColor = "sky";
         public Boolean showGrid = true;
         public Boolean lowDetailMode = false;
+        public Boolean experimentalAiPresetCreation = false;
         public Boolean renderConnectionsOnTop = false;
         public Boolean showTooltips = true;
         public Boolean showChatErrors = true;
@@ -239,6 +240,9 @@ public final class SettingsManager {
         }
         if (settings.lowDetailMode == null) {
             settings.lowDetailMode = false;
+        }
+        if (settings.experimentalAiPresetCreation == null) {
+            settings.experimentalAiPresetCreation = false;
         }
         if (settings.renderConnectionsOnTop == null) {
             settings.renderConnectionsOnTop = false;

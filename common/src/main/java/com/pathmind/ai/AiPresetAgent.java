@@ -425,8 +425,11 @@ public final class AiPresetAgent {
     }
 
     private static ToolResult planGraph(State state, JsonObject action) {
-        if (state.draftRevision > 0) return ToolResult.more(codedError("plan_frozen",
-            "The plan requirements are frozen after editing starts. Repair the graph to meet them; do not weaken requirements to pass validation."));
+        boolean correcting = state.draftRevision > 0;
+        String correctionReason = nullableString(action, "planCorrectionReason");
+        if (correcting && (state.repairRound == 0 || correctionReason == null || correctionReason.isBlank() || state.planCorrections >= 2))
+            return ToolResult.more(codedError("plan_frozen",
+                "After failed validation, plan_graph may correct the structural implementation plan with planCorrectionReason, at most twice. Preserve every typed outcome requirement."));
         String permissionError = draftPermissionError(state);
         if (permissionError != null) return ToolResult.more(codedError("draft_permission", permissionError));
         String goal = shortText(nullableString(action, "planGoal"), 240);
@@ -510,6 +513,14 @@ public final class AiPresetAgent {
         try { AiStructuralRequirements.checkShape(structural); }
         catch (RuntimeException failure) { return ToolResult.more(codedError("invalid_structural_requirement", failure.getMessage())); }
         plan.add("structuralRequirements", structural.deepCopy());
+        if (correcting && !AiPlanCorrection.preservesBehavior(state.plan, plan))
+            return ToolResult.more(codedError("plan_correction_weakens_behavior", "Correction cannot remove or change typed outcome requirements. It may replace mistaken structural implementation requirements."));
+        if (correcting) {
+            state.planCorrections++;
+            plan.addProperty("correctionReason", AiDisplayText.diagnostic(correctionReason));
+            state.validated = false;
+            state.previewed = false;
+        }
         state.plan = plan;
         state.planned = true;
         state.planRevision++;
@@ -839,7 +850,7 @@ public final class AiPresetAgent {
             + "Use the supplied node index instead of calling list_node_types unless the index is insufficient. Inspect all relevant contracts in one batched call. Prefer one coherent command batch when possible. After commands, validate and repair every error. Successful validation includes preview_execution output, so finish immediately unless repair is needed. "
             + "Never claim a tool succeeded until its result says ok. Do not reveal hidden reasoning; workLog contains only concise user-visible actions. "
             + "Use graphRef=null for the root graph, or a routine ID/alias on commands, focused queries and requirements to edit a routine body. Never connect nodes across graph scopes. bind_node_ref binds an inspected existing nodeId to an alias without editing; bind existing aliases before planning, rather than inventing unbound symbolic helper nodes. "
-            + "Record structuralRequirements for explicit nodes, ordered flow edges (ref,toRef,outputSocket,inputSocket) and action/sensor/parameter attachments (ref host,toRef child,slotIndex for parameter). Capture actual required relationships, not merely parameter values. Requirements freeze after editing; repair the draft or reference binding, never weaken the requirement. Declared checks still cannot prove complete intent extraction. "
+            + "Record structuralRequirements for explicit nodes, ordered flow edges (ref,toRef,outputSocket,inputSocket) and action/sensor/parameter attachments (ref host,toRef child,slotIndex for parameter). Capture actual required relationships, not merely parameter values. After validation fails, plan_graph may replace a mistaken structural implementation plan with planCorrectionReason, at most twice; every typed outcome requirement must remain unchanged. Prefer repairing the draft or reference binding when the plan is sound. Declared checks still cannot prove complete intent extraction. "
             + "Runtime-dependent requirements are warnings, not evidence of incorrect behavior. Never describe unverified values as verified. Internal validation or reference errors are repairable and cannot establish a user-facing blocker. ";
         if (capabilities != null && capabilities.nativeFunctionTools())
             return prompt + "Use exactly one native function per turn with only the fields in its function schema. Never emit a JSON action envelope as plain text.";
@@ -855,6 +866,22 @@ public final class AiPresetAgent {
         result.addProperty("ok", true);
         result.addProperty("message", message);
         return result;
+    }
+
+    private static String diagnosticResult(JsonObject result) {
+        String message = AiDisplayText.diagnostic(string(result, "message", "Tool result returned."));
+        if (!result.has("issues") || !result.get("issues").isJsonArray() || result.getAsJsonArray("issues").isEmpty()) return message;
+        StringBuilder details = new StringBuilder(message);
+        int shown = 0;
+        for (JsonElement value : result.getAsJsonArray("issues")) {
+            if (!value.isJsonObject() || shown++ >= 4) break;
+            JsonObject issue = value.getAsJsonObject();
+            details.append(" ").append(shown).append(") ")
+                .append(AiDisplayText.diagnostic(string(issue, "message", string(issue, "code", "Validation issue."))));
+        }
+        int remaining = result.getAsJsonArray("issues").size() - shown;
+        if (remaining > 0) details.append(" (+").append(remaining).append(" more)");
+        return details.toString();
     }
 
     private static String intentInstructions() {
@@ -946,6 +973,7 @@ public final class AiPresetAgent {
         private AiRequestProgress.Stage progressStage = AiRequestProgress.Stage.THINKING;
         private String progressMessage = "Understanding your request";
         private final List<AiToolTrace> trace = new ArrayList<>();
+        private int planCorrections;
         private String currentTool = "unknown";
         private int toolRevisionBefore;
         private JsonObject workingGraph;
@@ -1025,7 +1053,7 @@ public final class AiPresetAgent {
                 pendingResult = payload == null ? error("No tool result was produced.") : payload.deepCopy();
                 if (pendingResult.has("ok") && !pendingResult.get("ok").getAsBoolean()) toolErrors++;
                 trace.add(new AiToolTrace(turn, currentTool, pendingResult.has("ok") && pendingResult.get("ok").getAsBoolean(),
-                    string(pendingResult, "code", ""), AiDisplayText.diagnostic(string(pendingResult, "message", "Tool result returned.")),
+                    string(pendingResult, "code", ""), diagnosticResult(pendingResult),
                     toolRevisionBefore, draftRevision));
                 progress(progressStage, progressMessage, trace.get(trace.size() - 1));
             }

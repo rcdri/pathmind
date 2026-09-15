@@ -880,6 +880,13 @@ final class PathmindSettingsPopupController {
         }
 
         int buttonWidth = 90;
+        int experimentalCenterY = getSettingsExperimentalRowCenterY(popupX, contentPopupY, popupWidth, popupHeight, popupX + 20, nodeSettingsContentY);
+        if (bodyHovered && host.isPointInRect(mouseXi, mouseYi, gridToggleX,
+            experimentalCenterY - SETTINGS_TOGGLE_HEIGHT / 2, SETTINGS_TOGGLE_WIDTH, SETTINGS_TOGGLE_HEIGHT)) {
+            settings.experimentalAiPresetCreation = !Boolean.TRUE.equals(settings.experimentalAiPresetCreation);
+            SettingsManager.save(settings);
+            return true;
+        }
         int buttonHeight = 20;
         int buttonX = popupX + popupWidth - buttonWidth - 20;
         int buttonY = popupY + popupHeight - buttonHeight - 16;
@@ -1413,6 +1420,15 @@ final class PathmindSettingsPopupController {
             accentColor(),
             animation
         );
+
+        int experimentalCenterY = getSettingsExperimentalRowCenterY(popupX, contentPopupY, scaledWidth, scaledHeight, contentX, nodeSettingsContentY);
+        context.hLine(sectionDividerX, popupX + scaledWidth - 16, experimentalCenterY - 38,
+            animation.getAnimatedPopupColor(UITheme.BORDER_SUBTLE));
+        host.drawPopupTextWithEllipsis(context, Component.translatable("pathmind.settings.experimental").getString(),
+            contentX, experimentalCenterY - 28, scaledWidth - 40, animation.getAnimatedPopupColor(UITheme.TEXT_PRIMARY));
+        renderToggleRow(context, mouseX, mouseY, contentX, experimentalCenterY,
+            Component.translatable("pathmind.settings.aiPresetCreation").getString(),
+            Boolean.TRUE.equals(settings.experimentalAiPresetCreation), popupX, scaledWidth);
 
         PathmindPopupLayout.Rect closeButton = PathmindPopupLayout.settingsCloseButton(popupX, popupY, scaledWidth, scaledHeight, 90, 20);
         context.disableScissor();
@@ -2098,6 +2114,11 @@ final class PathmindSettingsPopupController {
         return restoreExamplesButtonBounds[1] + restoreExamplesButtonBounds[3] + 10;
     }
 
+    int getSettingsExperimentalRowCenterY(int popupX, int popupY, int popupWidth, int popupHeight, int contentX, int nodeSettingsContentY) {
+        int[] tutorial = getSettingsReplayTutorialButtonBounds(popupX, popupY, popupWidth, popupHeight, contentX, nodeSettingsContentY);
+        return tutorial[1] + tutorial[3] + 48;
+    }
+
     void restoreExamplePresets() {
         OnboardingPresetManager.RestoreResult result = OnboardingPresetManager.restoreExamplePresets();
         NodeErrorNotificationOverlay overlay = NodeErrorNotificationOverlay.getInstance();
@@ -2404,7 +2425,7 @@ final class PathmindSettingsPopupController {
         int nodeSettingsBodyY = getSettingsNodeSectionBodyY(popupY);
         int nodeSettingsContentY = getSettingsNodeSectionContentY(nodeSettingsBodyY, popupWidth - 40);
         int[] replayTutorialButtonBounds = getSettingsReplayTutorialButtonBounds(popupX, popupY, popupWidth, popupHeight, contentX, nodeSettingsContentY);
-        int contentBottom = replayTutorialButtonBounds[1] + replayTutorialButtonBounds[3];
+        int contentBottom = replayTutorialButtonBounds[1] + replayTutorialButtonBounds[3] + 48 + SETTINGS_TOGGLE_HEIGHT / 2;
         return Math.max(0, contentBottom - bodyBottom + 24);
     }
 
