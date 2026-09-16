@@ -18,12 +18,13 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 
-/** Reads the Sponge schematic v2/v3 {@code .schem} format into Pathmind's build plan. */
+/** Reads Sponge, Litematica, and vanilla structure schematic formats into build plans. */
 public final class SchematicLoader {
     private static final long MAX_SCHEMATIC_VOLUME = 4_000_000L;
 
@@ -35,15 +36,24 @@ public final class SchematicLoader {
             throw new SchematicLoadException("No schematic was selected.");
         }
         String filename = source.getFileName() == null ? "" : source.getFileName().toString();
-        if (!filename.toLowerCase(Locale.ROOT).endsWith(".schem")) {
-            throw new SchematicLoadException("Only Sponge .schem files are supported right now: " + filename);
+        String extension = filename.toLowerCase(Locale.ROOT);
+        if (!extension.endsWith(".schem") && !extension.endsWith(".schematic") && !extension.endsWith(".litematic") && !extension.endsWith(".nbt")) {
+            throw new SchematicLoadException("Unsupported schematic format: " + filename
+                + ". Supported formats are .schem, .schematic, .litematic, and .nbt.");
         }
 
         CompoundTag root;
         try {
             root = NbtIo.readCompressed(source, NbtAccounter.create(64L * 1024L * 1024L));
         } catch (IOException exception) {
-            throw new SchematicLoadException("Could not read " + filename + " as a compressed Sponge schematic.", exception);
+            throw new SchematicLoadException("Could not read " + filename + " as a compressed NBT schematic.", exception);
+        }
+
+        if (extension.endsWith(".litematic")) {
+            return loadLitematic(source, root, filename);
+        }
+        if (extension.endsWith(".nbt")) {
+            return loadStructure(source, root, filename);
         }
 
         // Sponge v2 stores the payload at the root. Newer exporters (including
@@ -106,6 +116,109 @@ public final class SchematicLoader {
             .thenComparingInt(placement -> placement.relativePosition().getZ())
             .thenComparingInt(placement -> placement.relativePosition().getX()));
         return new SchematicBuildPlan(source, new SchematicBuildPlan.Dimensions(width, height, length), offset,
+            placements, new LinkedHashMap<>(materials), ignoredAirBlocks);
+    }
+
+    /** Loads Litematica's native multi-region .litematic container. */
+    private static SchematicBuildPlan loadLitematic(Path source, CompoundTag root, String filename) throws SchematicLoadException {
+        CompoundTag regions = readCompound(root, "Regions");
+        if (regions == null || regions.keySet().isEmpty()) {
+            throw new SchematicLoadException(filename + " has no Litematica Regions.");
+        }
+
+        List<SchematicBuildPlan.Placement> placements = new ArrayList<>();
+        Map<String, Integer> materials = new HashMap<>();
+        int ignoredAirBlocks = 0;
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        long totalVolume = 0;
+
+        for (String name : regions.keySet()) {
+            CompoundTag region = readCompound(regions, name);
+            if (region == null) continue;
+            BlockPos position = readBlockPos(region, "Position");
+            BlockPos size = readBlockPos(region, "Size");
+            int width = Math.abs(size.getX());
+            int height = Math.abs(size.getY());
+            int length = Math.abs(size.getZ());
+            if (width == 0 || height == 0 || length == 0) {
+                throw new SchematicLoadException(filename + " has region " + name + " with an invalid Size.");
+            }
+            long volume = (long) width * height * length;
+            totalVolume += volume;
+            if (totalVolume > MAX_SCHEMATIC_VOLUME) {
+                throw new SchematicLoadException(filename + " contains more than " + MAX_SCHEMATIC_VOLUME + " blocks.");
+            }
+            ListTag paletteTag = readList(region, "BlockStatePalette");
+            if (paletteTag == null || paletteTag.isEmpty()) {
+                throw new SchematicLoadException(filename + " region " + name + " has no BlockStatePalette.");
+            }
+            List<PaletteEntry> palette = new ArrayList<>();
+            for (int index = 0; index < paletteTag.size(); index++) {
+                CompoundTag state = readListCompound(paletteTag, index);
+                palette.add(new PaletteEntry(parseBlockState(toStateId(state, filename), filename), toStateId(state, filename)));
+            }
+            long[] data = readLongArray(region, "BlockStates");
+            List<Integer> indices = decodePackedLongs(data, volume, palette.size(), filename, name);
+            for (int index = 0; index < indices.size(); index++) {
+                PaletteEntry entry = indices.get(index) >= 0 && indices.get(index) < palette.size() ? palette.get(indices.get(index)) : null;
+                if (entry == null) throw new SchematicLoadException(filename + " region " + name + " references palette index " + indices.get(index) + ".");
+                int localX = index % width;
+                int localZ = (index / width) % length;
+                int localY = index / (width * length);
+                // Litematica preserves selection direction in Size, but stores
+                // BlockStates from the region's minimum corner in +X/+Y/+Z order.
+                int originX = position.getX() + (size.getX() < 0 ? size.getX() + 1 : 0);
+                int originY = position.getY() + (size.getY() < 0 ? size.getY() + 1 : 0);
+                int originZ = position.getZ() + (size.getZ() < 0 ? size.getZ() + 1 : 0);
+                int x = originX + localX;
+                int y = originY + localY;
+                int z = originZ + localZ;
+                minX = Math.min(minX, x); minY = Math.min(minY, y); minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); maxZ = Math.max(maxZ, z);
+                if (entry.state().isAir()) { ignoredAirBlocks++; continue; }
+                placements.add(new SchematicBuildPlan.Placement(new BlockPos(x, y, z), entry.state(), entry.stateId()));
+                materials.merge(BuiltInRegistries.ITEM.getKey(entry.state().getBlock().asItem()).toString(), 1, Integer::sum);
+            }
+        }
+        if (minX == Integer.MAX_VALUE) throw new SchematicLoadException(filename + " contains no Litematica block data.");
+        BlockPos origin = new BlockPos(minX, minY, minZ);
+        List<SchematicBuildPlan.Placement> normalized = placements.stream()
+            .map(p -> new SchematicBuildPlan.Placement(p.relativePosition().subtract(origin), p.state(), p.stateId()))
+            .sorted(Comparator.comparingInt((SchematicBuildPlan.Placement p) -> p.relativePosition().getY()).thenComparingInt(p -> p.relativePosition().getZ()).thenComparingInt(p -> p.relativePosition().getX()))
+            .toList();
+        return new SchematicBuildPlan(source, new SchematicBuildPlan.Dimensions(maxX - minX + 1, maxY - minY + 1, maxZ - minZ + 1),
+            origin, normalized, new LinkedHashMap<>(materials), ignoredAirBlocks);
+    }
+
+    /** Loads the vanilla structure-block .nbt format. */
+    private static SchematicBuildPlan loadStructure(Path source, CompoundTag root, String filename) throws SchematicLoadException {
+        ListTag paletteTag = readList(root, "palette");
+        ListTag blocksTag = readList(root, "blocks");
+        if (paletteTag == null || blocksTag == null) throw new SchematicLoadException(filename + " is not a vanilla structure NBT file.");
+        List<PaletteEntry> palette = new ArrayList<>();
+        for (int index = 0; index < paletteTag.size(); index++) {
+            CompoundTag state = readListCompound(paletteTag, index);
+            String stateId = toStateId(state, filename);
+            palette.add(new PaletteEntry(parseBlockState(stateId, filename), stateId));
+        }
+        int[] size = readIntArray(root, "size");
+        if (size.length != 3 || size[0] <= 0 || size[1] <= 0 || size[2] <= 0) throw new SchematicLoadException(filename + " has an invalid size.");
+        List<SchematicBuildPlan.Placement> placements = new ArrayList<>();
+        Map<String, Integer> materials = new HashMap<>(); int ignoredAirBlocks = 0;
+        for (int index = 0; index < blocksTag.size(); index++) {
+            CompoundTag block = readListCompound(blocksTag, index);
+            int paletteIndex = readNumber(block, "getInt", "state");
+            if (paletteIndex < 0 || paletteIndex >= palette.size()) throw new SchematicLoadException(filename + " references palette index " + paletteIndex + ".");
+            int[] pos = readIntArray(block, "pos");
+            if (pos.length != 3) throw new SchematicLoadException(filename + " has a block without a valid position.");
+            PaletteEntry entry = palette.get(paletteIndex);
+            if (entry.state().isAir()) { ignoredAirBlocks++; continue; }
+            placements.add(new SchematicBuildPlan.Placement(new BlockPos(pos[0], pos[1], pos[2]), entry.state(), entry.stateId()));
+            materials.merge(BuiltInRegistries.ITEM.getKey(entry.state().getBlock().asItem()).toString(), 1, Integer::sum);
+        }
+        placements.sort(Comparator.comparingInt((SchematicBuildPlan.Placement p) -> p.relativePosition().getY()).thenComparingInt(p -> p.relativePosition().getZ()).thenComparingInt(p -> p.relativePosition().getX()));
+        return new SchematicBuildPlan(source, new SchematicBuildPlan.Dimensions(size[0], size[1], size[2]), BlockPos.ZERO,
             placements, new LinkedHashMap<>(materials), ignoredAirBlocks);
     }
 
@@ -202,6 +315,77 @@ public final class SchematicLoader {
         } catch (SchematicLoadException ignored) {
             return new int[0];
         }
+    }
+
+    private static long[] readLongArray(CompoundTag tag, String key) throws SchematicLoadException {
+        Object value = readTagValue(tag, "getLongArray", key);
+        return value instanceof long[] array ? array : new long[0];
+    }
+
+    private static ListTag readList(CompoundTag tag, String key) throws SchematicLoadException {
+        Object value = readTagValue(tag, "getList", key);
+        return value instanceof ListTag list ? list : null;
+    }
+
+    private static CompoundTag readListCompound(ListTag tag, int index) throws SchematicLoadException {
+        try {
+            Method method = ListTag.class.getMethod("getCompound", int.class);
+            Object value = method.invoke(tag, index);
+            if (value instanceof Optional<?> optional) value = optional.orElse(null);
+            if (value instanceof CompoundTag compound) return compound;
+            throw new SchematicLoadException("Schematic palette entry " + index + " is not a compound tag.");
+        } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException exception) {
+            throw new SchematicLoadException("Could not read schematic palette entry.", exception);
+        }
+    }
+
+    private static String readString(CompoundTag tag, String key) throws SchematicLoadException {
+        Object value = readTagValue(tag, "getString", key);
+        return value instanceof String string ? string : "";
+    }
+
+    private static BlockPos readBlockPos(CompoundTag root, String key) throws SchematicLoadException {
+        int[] array = readIntArray(root, key);
+        if (array.length == 3) return new BlockPos(array[0], array[1], array[2]);
+        CompoundTag value = readCompound(root, key);
+        if (value == null) return BlockPos.ZERO;
+        return new BlockPos(readNumber(value, "getInt", "x"), readNumber(value, "getInt", "y"), readNumber(value, "getInt", "z"));
+    }
+
+    private static String toStateId(CompoundTag tag, String filename) throws SchematicLoadException {
+        String name = readString(tag, "Name");
+        if (name.isBlank()) throw new SchematicLoadException(filename + " has a palette entry without a Name.");
+        CompoundTag properties = readCompound(tag, "Properties");
+        if (properties == null || properties.keySet().isEmpty()) return name;
+        List<String> assignments = new ArrayList<>();
+        for (String property : properties.keySet()) {
+            String value = readString(properties, property);
+            if (value.isBlank()) throw new SchematicLoadException(filename + " has an invalid " + property + " property.");
+            assignments.add(property + "=" + value);
+        }
+        assignments.sort(String::compareTo);
+        return name + "[" + String.join(",", assignments) + "]";
+    }
+
+    private static List<Integer> decodePackedLongs(long[] data, long count, int paletteSize, String filename, String region)
+        throws SchematicLoadException {
+        if (count > Integer.MAX_VALUE) throw new SchematicLoadException(filename + " is too large to load.");
+        int bits = Math.max(2, 32 - Integer.numberOfLeadingZeros(Math.max(1, paletteSize - 1)));
+        long requiredBits = count * bits;
+        if (data.length == 0 || requiredBits > (long) data.length * Long.SIZE) {
+            throw new SchematicLoadException(filename + " region " + region + " has incomplete BlockStates data.");
+        }
+        long mask = (1L << bits) - 1;
+        List<Integer> values = new ArrayList<>((int) count);
+        for (int index = 0; index < count; index++) {
+            long bitIndex = (long) index * bits;
+            int word = (int) (bitIndex >>> 6);
+            int shift = (int) (bitIndex & 63);
+            long value = data[word] >>> shift;
+            if (shift + bits > Long.SIZE) value |= data[word + 1] << (Long.SIZE - shift);
+            values.add((int) (value & mask));
+        }
+        return values;
     }
 
     private static CompoundTag readCompound(CompoundTag tag, String key) throws SchematicLoadException {

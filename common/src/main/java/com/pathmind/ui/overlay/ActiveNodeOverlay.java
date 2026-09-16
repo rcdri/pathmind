@@ -42,6 +42,11 @@ public class ActiveNodeOverlay {
      * Render the overlay if execution is active
      */
     public void render(GuiGraphics context, Font textRenderer, int screenWidth, int screenHeight) {
+        render(context, textRenderer, screenWidth, screenHeight, 0);
+    }
+
+    /** Renders below any top-right HUD space already claimed by another card. */
+    public void render(GuiGraphics context, Font textRenderer, int screenWidth, int screenHeight, int topInset) {
         boolean isExecuting = executionManager.isExecuting();
         boolean showingCompletion = executionManager.isDisplayingCompletion();
         Node primaryNode = executionManager.getActiveNode();
@@ -66,14 +71,15 @@ public class ActiveNodeOverlay {
         }
 
         int cardSpacing = 6;
-        int maxCards = Math.max(1, (screenHeight - MARGIN) / (OVERLAY_HEIGHT + cardSpacing));
+        int topY = MARGIN + Math.max(0, topInset);
+        int maxCards = Math.max(1, (screenHeight - topY + cardSpacing) / (OVERLAY_HEIGHT + cardSpacing));
         int cardCount = Math.min(nodesToRender.size(), maxCards);
 
         for (int i = 0; i < cardCount; i++) {
             Node node = nodesToRender.get(i);
             int slideOffset = (int) ((1f - progress) * SLIDE_OFFSET);
             int overlayX = screenWidth - OVERLAY_WIDTH - MARGIN + slideOffset;
-            int overlayY = MARGIN + (i * (OVERLAY_HEIGHT + cardSpacing));
+            int overlayY = topY + (i * (OVERLAY_HEIGHT + cardSpacing));
 
             context.fill(overlayX, overlayY, overlayX + OVERLAY_WIDTH, overlayY + OVERLAY_HEIGHT,
                 AnimationHelper.multiplyAlpha(UITheme.OVERLAY_BACKGROUND, progress));
@@ -162,7 +168,7 @@ public class ActiveNodeOverlay {
         }
 
         if (navigatorSnapshot != null && cardCount < maxCards) {
-            renderNavigatorCard(context, textRenderer, screenWidth, progress, cardCount, cardSpacing, navigatorSnapshot);
+            renderNavigatorCard(context, textRenderer, screenWidth, progress, topY, cardCount, cardSpacing, navigatorSnapshot);
         }
     }
 
@@ -236,11 +242,11 @@ public class ActiveNodeOverlay {
         }
     }
 
-    private void renderNavigatorCard(GuiGraphics context, Font textRenderer, int screenWidth, float progress,
+    private void renderNavigatorCard(GuiGraphics context, Font textRenderer, int screenWidth, float progress, int topY,
                                      int cardIndex, int cardSpacing, PathmindNavigator.Snapshot snapshot) {
         int slideOffset = (int) ((1f - progress) * SLIDE_OFFSET);
         int overlayX = screenWidth - OVERLAY_WIDTH - MARGIN + slideOffset;
-        int overlayY = MARGIN + (cardIndex * (OVERLAY_HEIGHT + cardSpacing));
+        int overlayY = topY + (cardIndex * (OVERLAY_HEIGHT + cardSpacing));
 
         context.fill(overlayX, overlayY, overlayX + OVERLAY_WIDTH, overlayY + OVERLAY_HEIGHT,
             AnimationHelper.multiplyAlpha(UITheme.OVERLAY_BACKGROUND, progress));

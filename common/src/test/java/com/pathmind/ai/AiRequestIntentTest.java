@@ -13,6 +13,74 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AiRequestIntentTest {
+    @Test void replyToClarificationCannotBeClassifiedAsAnotherClarification() {
+        String user = "you choose";
+        String context = """
+            {"conversation":{"messages":[
+              {"role":"user","text":"Build a new preset that walks then repeats Jump twice."},
+              {"role":"event","text":"Request outcome: CLARIFICATION. No preset changes applied."},
+              {"role":"assistant","text":"How long should it walk?"}]}}
+            """;
+        assertTrue(AiPresetAgent.pendingClarification(context));
+        var askAgain = decision("finish", "undecided", "clarify", user);
+        askAgain.addProperty("completion", "clarification"); askAgain.addProperty("completionReason", "Choice missing");
+        askAgain.addProperty("response", "Which duration should I use?");
+        var answer = decision("finish", "inspect", "discuss", user); answer.addProperty("response", "I'll choose a safe default.");
+        var report = AiPresetAgent.runMeasured(new Script(askAgain, answer), "test-model", user, context,
+            fixture(), "Open", true, true).join();
+        assertTrue(report.succeeded(), report.error());
+        assertEquals(AiCompletionOutcome.ANSWER, report.proposal().outcome());
+        assertTrue(report.trace().stream().anyMatch(step -> step.message().contains("answers the previous clarification")));
+    }
+
+    @Test void clarificationCannotDiscardAnEditedDraft() {
+        String user = "Build a new preset and choose the defaults";
+        var plan = action("plan_graph", "new"); plan.addProperty("planGoal", "Create a starting preset");
+        plan.add("planSteps", JsonParser.parseString("[\"Create Start\"]"));
+        var patch = action("apply_graph_commands", "new"); patch.addProperty("draftRevision", 0);
+        patch.add("commands", JsonParser.parseString("[{\"kind\":\"add_node\",\"ref\":\"start\",\"nodeType\":\"START\"}]"));
+        var escape = action("finish", "new"); escape.addProperty("completion", "clarification");
+        escape.addProperty("completionReason", "Need a name"); escape.addProperty("response", "What should it be named?");
+        var report = run(new Script(decision("select_target", "new", "build", user), plan, patch, escape,
+            action("validate_graph", "new"), action("finish", "new")), user, null);
+        assertTrue(report.succeeded(), report.error());
+        assertEquals(AiCompletionOutcome.PROPOSAL, report.proposal().outcome());
+        assertTrue(report.trace().stream().anyMatch(step -> step.code().equals("clarification_after_edit")));
+    }
+
+    @Test void delegatedClarificationReplyCanContinueIntoAValidatedBuild() {
+        String user = "you choose";
+        String context = """
+            {"conversation":{"messages":[
+              {"role":"user","text":"Make a new preset that walks forward, then jumps twice using Repeat."},
+              {"role":"event","text":"Request outcome: CLARIFICATION. No preset changes applied."},
+              {"role":"assistant","text":"How long should it walk?"}]}}
+            """;
+        var plan = action("plan_graph", "new"); plan.addProperty("planGoal", "Walk forward briefly, then repeat Jump twice");
+        plan.add("planSteps", JsonParser.parseString("[\"Walk forward using typed inputs\",\"Repeat Jump twice\"]"));
+        var patch = action("apply_graph_commands", "new"); patch.addProperty("draftRevision", 0);
+        patch.add("commands", JsonParser.parseString("""
+            [{"kind":"add_sequence","refs":["start","walk","repeat"],"nodeTypes":["START","WALK","CONTROL_REPEAT"]},
+             {"kind":"add_node","ref":"look","nodeType":"SENSOR_LOOK_DIRECTION"},
+             {"kind":"add_node","ref":"duration","nodeType":"PARAM_DURATION"},
+             {"kind":"set_parameter","ref":"duration","parameterId":"duration","value":"1"},
+             {"kind":"attach_parameter","host":"walk","child":"look","slotIndex":0},
+             {"kind":"attach_parameter","host":"walk","child":"duration","slotIndex":1},
+             {"kind":"set_parameter","ref":"repeat","parameterId":"count","value":"2"},
+             {"kind":"add_node","ref":"jump","nodeType":"JUMP"},
+             {"kind":"attach_action","host":"repeat","child":"jump"}]
+            """));
+        var report = AiPresetAgent.runMeasured(new Script(decision("select_target", "new", "build", user), plan, patch,
+            action("validate_graph", "new"), action("finish", "new")), "test-model", user, context,
+            fixture(), "Open", true, true).join();
+        assertTrue(report.succeeded(), report.error());
+        assertEquals(AiCompletionOutcome.PROPOSAL, report.proposal().outcome());
+        assertEquals("2", report.proposal().graph().getNodes().stream()
+            .filter(node -> node.getType() == NodeType.CONTROL_REPEAT).findFirst().orElseThrow()
+            .getParameters().stream().filter(parameter -> "count".equals(parameter.getId())).findFirst().orElseThrow()
+            .getValue());
+    }
+
     @Test void clarificationCannotBeUsedToReturnAnEditDescriptionInsteadOfAQuestion() {
         String user = "Extend this preset";
         var advice = decision("finish", "undecided", "edit", user);

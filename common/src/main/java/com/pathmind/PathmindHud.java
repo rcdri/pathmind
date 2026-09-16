@@ -47,8 +47,10 @@ public final class PathmindHud {
         MatrixStackBridge.push(matrices);
         MatrixStackBridge.translateZ(matrices, 500.0f);
         try {
+            int schematicReservedHeight = schematicBuildOverlay.reservedHeight();
+            schematicBuildOverlay.render(drawContext, client.font, scaledWidth, scaledHeight);
             if (activeNodeOverlay != null) {
-                activeNodeOverlay.render(drawContext, client.font, scaledWidth, scaledHeight);
+                activeNodeOverlay.render(drawContext, client.font, scaledWidth, scaledHeight, schematicReservedHeight);
             }
             if (variablesOverlay != null) {
                 variablesOverlay.render(drawContext, client.font, scaledWidth, scaledHeight);
@@ -56,7 +58,6 @@ public final class PathmindHud {
             if (navigatorDebugOverlay != null) {
                 navigatorDebugOverlay.render(drawContext, client.font, scaledWidth, scaledHeight);
             }
-            schematicBuildOverlay.render(drawContext, client.font, scaledWidth, scaledHeight);
         } finally {
             MatrixStackBridge.pop(matrices);
         }

@@ -234,7 +234,11 @@ public final class AiGraphCommandEngine {
         Node input = runtime.get(to.getId());
         if (output == null || input == null) throw new IllegalArgumentException("The connection endpoints could not be constructed.");
         if (output.isSensorNode() || input.isSensorNode() || output.isParameterNode() || input.isParameterNode()) {
-            throw new IllegalArgumentException("Sensors and parameter values must use attachment commands, not connect.");
+            String guidance = output.isSensorNode() || input.isSensorNode()
+                ? "Use attach_sensor with the control host and sensor child."
+                : "Use attach_parameter with the non-parameter host, parameter child, and the host contract's slotIndex.";
+            throw new CommandFailure("wrong_connection_kind", true, "Cannot connect " + from.getType() + " to "
+                + to.getType() + " as control flow. " + guidance);
         }
         if (outputSocket < 0 || outputSocket >= output.getOutputSocketCount()) {
             throw new IllegalArgumentException("Output socket " + outputSocket + " is invalid for " + from.getType() + ".");

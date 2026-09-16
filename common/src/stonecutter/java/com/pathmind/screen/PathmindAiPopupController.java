@@ -374,6 +374,7 @@ final class PathmindAiPopupController {
                 };
                 if (value.outcome() == com.pathmind.ai.AiCompletionOutcome.CLARIFICATION || value.outcome() == com.pathmind.ai.AiCompletionOutcome.BLOCKED)
                     appendHistory(requestProvider, Role.EVENT, "Request outcome: " + value.outcome() + ". No preset changes applied.");
+                else appendHistory(requestProvider, Role.EVENT, "Request outcome: ANSWER. No preset changes applied.");
             }
             String response = value.response() == null || value.response().isBlank() ? (value.editsCurrentPreset() ? "I prepared an update for review." : value.changesGraph() ? "I prepared a new preset for review." : "I reviewed the current preset.") : value.response();
             appendHistory(requestProvider, Role.ASSISTANT, response);

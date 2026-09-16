@@ -14,6 +14,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AiGraphCommandEngineTest {
     @Test
+    void connectingParameterAsFlowReturnsExactAttachmentRecovery() {
+        JsonArray commands = new JsonArray();
+        commands.add(command("add_node", "ref", "walk", "nodeType", "WALK"));
+        commands.add(command("add_node", "ref", "direction", "nodeType", "PARAM_DIRECTION"));
+        commands.add(command("connect", "from", "direction", "to", "walk", "outputSocket", 0, "inputSocket", 0));
+        var result = AiGraphCommandEngine.apply(emptyGraph(), commands, Map.of(), true, true);
+        assertFalse(result.success());
+        assertEquals("wrong_connection_kind", result.errorCode());
+        assertTrue(result.message().contains("attach_parameter"));
+        assertTrue(result.message().contains("slotIndex"));
+        assertEquals(0, emptyGraph().getAsJsonArray("nodes").size());
+    }
+
+    @Test
     void buildsCanonicalNodesAndConnectionsFromSemanticCommands() {
         JsonArray commands = new JsonArray();
         commands.add(command("add_node", "ref", "start", "nodeType", "START"));

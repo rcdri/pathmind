@@ -57,6 +57,10 @@ public final class SchematicFiles {
     }
 
     private static boolean isSupported(String name) {
-        return name.toLowerCase().endsWith(".schem");
+        String normalized = name.toLowerCase();
+        return normalized.endsWith(".schem")
+            || normalized.endsWith(".schematic")
+            || normalized.endsWith(".litematic")
+            || normalized.endsWith(".nbt");
     }
 }

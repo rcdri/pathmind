@@ -3,6 +3,7 @@ package com.pathmind.execution;
 import static com.pathmind.execution.ExecutionGraphSnapshotSupport.*;
 
 import com.pathmind.nodes.Node;
+import com.pathmind.schematic.SchematicBuildExecutor;
 import com.pathmind.nodes.NodeConnection;
 import com.pathmind.nodes.NodeParameter;
 import com.pathmind.nodes.NodeType;
@@ -1056,6 +1057,10 @@ public class ExecutionManager {
      */
     public void requestStopAll() {
         cancelAllNavigationCommands();
+        // The workspace Stop control routes through this method. Native
+        // schematic builds run alongside the graph scheduler, so explicitly
+        // stop one even when the graph has already finished its own chain.
+        SchematicBuildExecutor.getInstance().stop("Pathmind execution stop");
 
         if (!sessionState.isActivelyExecuting() && sessionState.getActiveNode() == null && activeChains.isEmpty()) {
             runtimeValues.clear();

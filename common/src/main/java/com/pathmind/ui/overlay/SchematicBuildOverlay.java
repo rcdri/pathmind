@@ -16,29 +16,28 @@ public final class SchematicBuildOverlay {
     private static final int PADDING = 7;
     private static final int LINE_HEIGHT = 11;
     private static final int BAR_HEIGHT = 6;
+    /** Gap reserved between this card and the next top-right HUD card. */
+    private static final int STACK_GAP = 6;
     private static final long PAUSED_DISMISS_DELAY_MS = 4_500L;
 
     private String lastState = "";
     private long pausedAtMs;
 
+    /**
+     * Returns the vertical space currently occupied by this card, including its
+     * stack gap. Other top-right HUD cards use this to avoid overlap.
+     */
+    public int reservedHeight() {
+        SchematicBuildExecutor.Snapshot snapshot = SchematicBuildExecutor.getInstance().snapshot();
+        return shouldRender(snapshot) ? cardHeight() + STACK_GAP : 0;
+    }
+
     public void render(GuiGraphics context, Font font, int screenWidth, int screenHeight) {
         SchematicBuildExecutor.Snapshot snapshot = SchematicBuildExecutor.getInstance().snapshot();
-        if (snapshot == null) {
-            lastState = "";
-            pausedAtMs = 0L;
-            return;
-        }
-        long now = System.currentTimeMillis();
-        if (!snapshot.state().equals(lastState)) {
-            lastState = snapshot.state();
-            pausedAtMs = "PAUSED".equals(snapshot.state()) ? now : 0L;
-        }
+        if (!shouldRender(snapshot)) return;
         // A paused build remains resumable via !build resume, but its progress
         // card should not become a permanent HUD fixture after the reason has
         // been reported through Pathmind's notification stack.
-        if ("PAUSED".equals(snapshot.state()) && now - pausedAtMs >= PAUSED_DISMISS_DELAY_MS) {
-            return;
-        }
         List<String> lines = List.of(
             "Schematic Build " + snapshot.state() + (snapshot.creativeFlight() ? "  Creative Flight" : "  Survival"),
             snapshot.completedBlocks() + "/" + snapshot.totalBlocks() + " blocks  ·  " + snapshot.remainingBlocks() + " remaining"
@@ -46,7 +45,7 @@ public final class SchematicBuildOverlay {
             snapshot.activeTarget() == null ? "Target: --" : "Target: " + format(snapshot.activeTarget()),
             snapshot.status() == null || snapshot.status().isBlank() ? "--" : snapshot.status()
         );
-        int height = PADDING * 2 + lines.size() * LINE_HEIGHT + BAR_HEIGHT + 4;
+        int height = cardHeight();
         int x = screenWidth - WIDTH - MARGIN;
         int y = MARGIN;
         context.fill(x, y, x + WIDTH, y + height, UITheme.OVERLAY_BACKGROUND);
@@ -63,6 +62,24 @@ public final class SchematicBuildOverlay {
         int barWidth = WIDTH - PADDING * 2;
         context.fill(barX, barY, barX + barWidth, barY + BAR_HEIGHT, 0xFF2A3440);
         context.fill(barX, barY, barX + (int) Math.round(barWidth * snapshot.progress()), barY + BAR_HEIGHT, UITheme.ACCENT_SKY);
+    }
+
+    private boolean shouldRender(SchematicBuildExecutor.Snapshot snapshot) {
+        if (snapshot == null) {
+            lastState = "";
+            pausedAtMs = 0L;
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        if (!snapshot.state().equals(lastState)) {
+            lastState = snapshot.state();
+            pausedAtMs = "PAUSED".equals(snapshot.state()) ? now : 0L;
+        }
+        return !"PAUSED".equals(snapshot.state()) || now - pausedAtMs < PAUSED_DISMISS_DELAY_MS;
+    }
+
+    private static int cardHeight() {
+        return PADDING * 2 + 4 * LINE_HEIGHT + BAR_HEIGHT + 4;
     }
 
     private String format(net.minecraft.core.BlockPos pos) {

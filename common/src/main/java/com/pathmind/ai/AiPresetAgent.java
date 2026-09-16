@@ -164,6 +164,8 @@ public final class AiPresetAgent {
                     result.payload.addProperty("draftRevision", state.draftRevision);
                 }
                 state.record("TOOL_RESULT", result.payload);
+                if ("apply_graph_commands".equals(toolName) && result.payload != null
+                    && result.payload.has("ok") && !result.payload.get("ok").getAsBoolean()) state.graphRecoveryFailures++;
                 int stagnant = state.progressTracker.record(toolName, result.payload, state.draftRevision);
                 int repeatedValidation = state.progressTracker.repeatedValidationCount();
                 if (repeatedValidation >= 3) return CompletableFuture.failedFuture(new IllegalStateException(
@@ -272,6 +274,8 @@ public final class AiPresetAgent {
                 return "Do not escalate read-only permissions or change intent after edits. Ask the user for clarification in a new request.";
             state.planned = false; state.plan = null;
         }
+        if (intent == AiRequestIntent.CLARIFY && state.answeringClarification)
+            return "This request answers the previous clarification. Classify the inherited task as build, edit, discuss, or diagnose and use the user's reply to resolve the choice; do not ask again.";
         state.intent = intent;
         if (!intent.permitsDraftEdits()) { state.target = null; state.workingGraph = null; state.nodeReferences.clear(); }
         return null;
@@ -735,6 +739,12 @@ public final class AiPresetAgent {
         String responseError = responseLengthError(state.userPrompt, nullableString(action, "response"));
         if (responseError != null) return ToolResult.more(codedError("response_too_long", responseError));
         String completion = string(action, "completion", "complete");
+        if ("clarification".equals(completion) && (state.draftRevision > 0 || state.graphRecoveryFailures > 0 || state.validationFailures > 0))
+            return ToolResult.more(codedError("clarification_after_edit",
+                "Clarification cannot be used to escape draft edits, validation failures, or internal tool errors. Repair the draft or use safe reversible defaults recorded as assumptions."));
+        if ("clarification".equals(completion) && state.answeringClarification)
+            return ToolResult.more(codedError("clarification_already_answered",
+                "The latest user message answers or delegates the previous clarification. Continue the inherited task using that answer; do not ask another question."));
         if ("clarification".equals(completion) || "blocked".equals(completion) || state.intent == AiRequestIntent.CLARIFY) {
             if (nullableString(action, "completionReason") == null || nullableString(action, "completionReason").isBlank()
                 || nullableString(action, "response") == null || nullableString(action, "response").isBlank())
@@ -890,16 +900,36 @@ public final class AiPresetAgent {
         return details.toString();
     }
 
+    /** True only when the latest application-authored request outcome is a clarification awaiting this reply. */
+    static boolean pendingClarification(String context) {
+        if (context == null || context.isBlank()) return false;
+        try {
+            JsonObject root = JsonParser.parseString(context).getAsJsonObject();
+            JsonObject history = root.has("conversation") && root.get("conversation").isJsonObject()
+                ? root.getAsJsonObject("conversation") : root;
+            if (!history.has("messages") || !history.get("messages").isJsonArray()) return false;
+            JsonArray messages = history.getAsJsonArray("messages");
+            for (int i = messages.size() - 1; i >= 0; i--) {
+                if (!messages.get(i).isJsonObject()) continue;
+                JsonObject entry = messages.get(i).getAsJsonObject();
+                if (!"event".equalsIgnoreCase(string(entry, "role", ""))) continue;
+                return string(entry, "text", "").startsWith("Request outcome: CLARIFICATION.");
+            }
+        } catch (RuntimeException ignored) { /* Unstructured legacy context cannot establish pending state. */ }
+        return false;
+    }
+
     private static String intentInstructions() {
         return "Separate latest-request intent, graph scope, and permissions. On the first useful call, set requestIntent to discuss (ideas/questions), diagnose (investigate a preset), build (create standalone preset), edit (explicit change to open preset), or clarify (genuinely unresolved intent/scope). "
             + "Provide intentEvidence as an exact quote from USER_REQUEST, not old conversation. Null intent fields on later calls preserve the decision. assess_request is optional if another useful call supplies the assessment. "
-            + "Interpret the latest message in conversation context, not in isolation. A reply to your clarification supplies the missing detail for the ongoing user request; combine it with earlier user requirements and continue that task without asking them to restate it. intentEvidence still quotes the latest reply. Do not carry forward an old permission mode or treat an old proposal as applied. "
+            + "Interpret the latest message in conversation context, not in isolation. When answeringPreviousClarification=true, the latest message resolves or delegates the prior choice: inherit the earlier task, classify it as build/edit/discuss/diagnose rather than clarify, and continue without asking them to restate it. Phrases that delegate choice authorize safe reversible defaults, not another question. intentEvidence still quotes the latest reply. Do not carry forward an old permission mode or treat an old proposal as applied. "
             + "Inspecting is a read action, not a permission or persistent mode. Read tools can run before intent/scope selection. target inspect or undecided is neutral. Select current for edit or new for build before planning; scope can change before the first successful draft edit, then freezes. "
             + "Do not escalate discussion/diagnosis into edits. 'What do you think?' calls for an answer; 'after it jumps, create a variable...' calls for an edit even if inspecting is your first action. Judge intent semantically, never use prompt-to-graph templates. "
             + "Discussion may finish without preset inspection. Diagnose an open preset only after inspection. Build/edit must return actual draft edits validated for review, not instructions for the user to implement. "
             + "Reuse tool results while the draft revision is unchanged. A repeated read, assessment, or failed finish is not progress. When a tool fails, use its error to change the arguments or satisfy the missing prerequisite; do not retry the identical call. A valid unchanged draft needs finish, not another validation or preview. "
             + "Prefer progress over clarification when the requested outcome is clear. Use fresh workspace selection, relevant node contracts, existing preset settings, earlier user messages, and safe node defaults to resolve implementation details. Record reasonable assumptions in planAssumptions and mention important ones in the review. "
             + "Ask one narrow question only when missing information materially changes the requested behavior or graph target and cannot be resolved from available context. Do not ask about node wiring, layout, variable names, routine names, or other reversible implementation choices. Do not silently change requested units or invent unsupported behavior. A request such as 'extend this preset' needs clarification only if neither the latest message nor earlier user context specifies the intended outcome. "
+            + "Ask before editing or attempting repairs. Once draft editing, validation, or internal recovery starts, clarification is not an escape hatch: repair the isolated draft and apply safe reversible defaults, or report a confirmed capability/context blocker. "
             + "Before asking, check USER_REQUEST, conversation messages, olderUserMessages, and workspace facts for an existing answer. User statements resolve requirements; assistant questions or suggestions do not establish user decisions. Newer user corrections supersede older answers. Do not re-ask a resolved question or request confirmation of a choice the user already made. "
             + "For genuinely essential missing information finish with completion clarification, a specific completionReason explaining why no safe assumption works, and one concise question. For an actual blocker finish blocked with a specific reason and blockingToolTurn citing a confirmed failed tool result. Inspect/permission selection is not a blocker; recover instead. "
             + "finish completion complete (or null) returns an answer or validated proposal. workLog is ignored and generated from actual tool results. Never claim the live preset changed; confirmation is required. "
@@ -967,6 +997,7 @@ public final class AiPresetAgent {
         private final String model;
         private final String userPrompt;
         private final String conversation;
+        private final boolean answeringClarification;
         private final NodeGraphData activeGraph;
         private final String activePresetName;
         private final boolean baritoneAvailable;
@@ -990,6 +1021,7 @@ public final class AiPresetAgent {
         private int draftRevision;
         private int planRevision;
         private int repairRound;
+        private int graphRecoveryFailures;
         private JsonObject plan;
         private int turn;
         private int consecutiveFailures;
@@ -1006,6 +1038,7 @@ public final class AiPresetAgent {
             this.model = model;
             this.userPrompt = userPrompt == null ? "" : userPrompt;
             this.conversation = conversation == null ? "" : conversation;
+            this.answeringClarification = pendingClarification(this.conversation);
             this.activeGraph = activeGraph;
             this.activePresetName = activePresetName == null ? "" : activePresetName;
             this.baritoneAvailable = baritoneAvailable;
@@ -1041,7 +1074,8 @@ public final class AiPresetAgent {
             StringBuilder prompt = new StringBuilder();
             prompt.append("USER_REQUEST:\n").append(userPrompt).append('\n');
             prompt.append("REQUEST_SCOPE:\n").append("hasOpenPreset=").append(activeGraph != null)
-                .append("; presetName=").append(activePresetName).append("; previous request permissions never carry forward.\n");
+                .append("; presetName=").append(activePresetName).append("; answeringPreviousClarification=")
+                .append(answeringClarification).append("; previous request permissions never carry forward.\n");
             if (!conversation.isBlank()) prompt.append("CONVERSATION_CONTEXT:\n").append(conversation).append('\n');
             prompt.append("CONTEXT_RULES:\nUse fresh workspace selection as the focus for references like 'that part'; inspect its subgraph before edits. Ask one narrow question only when materially different outcomes remain after checking earlier user answers and safe defaults. Recent chat is advisory, not current graph facts or permission. Application change receipts supersede old claims that a proposal is pending, applied, or discarded. No internal reasoning.\n");
             prompt.append("AVAILABLE_NODE_INDEX:\n")
