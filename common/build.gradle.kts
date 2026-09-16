@@ -47,6 +47,7 @@ val prepareStonecutterCompatibilitySources = stonecutterCompatibilityNode?.let {
         dependsOn(generateStonecutterSources)
         from(generatedStonecutterDirectory)
         include(
+            "com/pathmind/screen/PathmindAiPopupController.java",
             "com/pathmind/screen/PathmindMarketplaceGraphPreviewRenderer.java",
             "com/pathmind/screen/PathmindMarketplacePopupController.java",
             "com/pathmind/screen/PathmindMarketplacePreviewLoader.java",

@@ -1580,8 +1580,7 @@ public final class SchematicBuildExecutor {
         // so !build resume or a resumed node can continue the same build.
         NodeErrorNotificationOverlay.getInstance().show(message, UITheme.STATE_ERROR);
         PathmindNavigator.getInstance().stop("schematic build paused");
-        PathmindNavigator.getInstance().stopExternalNavigation(Minecraft.getInstance());
-        NavigatorCameraController.end(Minecraft.getInstance().player);
+        releaseClientControl();
         // A paused build has relinquished world control. Hide its persistent
         // preview until an explicit resume rather than leaving a misleading
         // ghost after an automatic safety cancellation.
@@ -1595,8 +1594,7 @@ public final class SchematicBuildExecutor {
                 + (retainedScaffolds == 1 ? "" : "s") + " still needed for safe support";
         state = State.COMPLETED;
         LOGGER.info("build complete source={} origin={}", schematic == null ? "--" : schematic.source(), format(origin));
-        PathmindNavigator.getInstance().stopExternalNavigation(Minecraft.getInstance());
-        NavigatorCameraController.end(Minecraft.getInstance().player);
+        releaseClientControl();
         SchematicPreview.clearBuild();
         liveLog("complete");
         if (completion != null && !completion.isDone()) {
@@ -1609,8 +1607,7 @@ public final class SchematicBuildExecutor {
         status = message;
         state = State.FAILED;
         LOGGER.error("build failed: {}", message);
-        PathmindNavigator.getInstance().stopExternalNavigation(Minecraft.getInstance());
-        NavigatorCameraController.end(Minecraft.getInstance().player);
+        releaseClientControl();
         SchematicPreview.clearBuild();
         liveLog("failed reason=" + message);
         if (completion != null && !completion.isDone()) {
@@ -1633,11 +1630,21 @@ public final class SchematicBuildExecutor {
         status = reason;
         state = State.IDLE;
         LOGGER.info("build stopped: {}", reason);
-        PathmindNavigator.getInstance().stopExternalNavigation(Minecraft.getInstance());
-        NavigatorCameraController.end(Minecraft.getInstance().player);
+        releaseClientControl();
         SchematicPreview.clearBuild();
         liveLog("stopped reason=" + reason);
         clearTerminalState();
+    }
+
+    /**
+     * Releases navigation and camera state when a client is available. Unit
+     * tests run without a Minecraft client, but stopping an idle build must
+     * still clear its executor state in that environment.
+     */
+    private static void releaseClientControl() {
+        Minecraft client = Minecraft.getInstance();
+        PathmindNavigator.getInstance().stopExternalNavigation(client);
+        NavigatorCameraController.end(client == null ? null : client.player);
     }
 
     private void clearTerminalState() {
