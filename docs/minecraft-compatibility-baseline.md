@@ -83,11 +83,11 @@ pathmind-fabric-<modVersion>+mc<minecraftVersion>.jar
 pathmind-neoforge-<modVersion>+mc<minecraftVersion>.jar
 ```
 
-For mod version `1.1.5` and Minecraft `1.21.11`, the baseline names are:
+For mod version `1.1.6` and Minecraft `1.21.11`, the baseline names are:
 
 ```text
-pathmind-fabric-1.1.5+mc1.21.11.jar
-pathmind-neoforge-1.1.5+mc1.21.11.jar
+pathmind-fabric-1.1.6+mc1.21.11.jar
+pathmind-neoforge-1.1.6+mc1.21.11.jar
 ```
 
 The public jar must not have `-dev`, `-dev-shadow`, `-sources`, `-all`, or `-javadoc` in its name. Development and sources jars may exist beside it but are excluded from staging.
