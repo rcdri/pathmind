@@ -25,18 +25,23 @@ class AiPassTwoTest {
     }
     @Test void planCorrectionCanRepairBindingsButCannotWeakenBehavior() {
         JsonObject before = JsonParser.parseString("""
-            {"requirements":[{"ref":"wrong","nodeType":"CRAFT","parameterId":"amount","value":"8"}],
+            {"goal":"Craft eight items","requirements":[{"ref":"wrong","nodeType":"CRAFT","parameterId":"amount","value":"8"}],
              "structuralRequirements":[{"kind":"parameter","ref":"wrong","toRef":"source","slotIndex":1}]}
             """).getAsJsonObject();
         JsonObject corrected = JsonParser.parseString("""
-            {"requirements":[{"ref":"craft","nodeType":"CRAFT","parameterId":"amount","value":"8"}],
+            {"goal":"Craft eight items","requirements":[{"ref":"craft","nodeType":"CRAFT","parameterId":"amount","value":"8"}],
              "structuralRequirements":[{"kind":"parameter","ref":"craft","toRef":"amount","slotIndex":0}]}
             """).getAsJsonObject();
         JsonObject weakened = JsonParser.parseString("""
-            {"requirements":[],"structuralRequirements":[]}
+            {"goal":"Craft eight items","requirements":[],"structuralRequirements":[]}
             """).getAsJsonObject();
         assertTrue(AiPlanCorrection.preservesBehavior(before, corrected));
         assertFalse(AiPlanCorrection.preservesBehavior(before, weakened));
+        JsonObject droppedStructure = corrected.deepCopy();
+        droppedStructure.add("structuralRequirements", new JsonArray());
+        assertFalse(AiPlanCorrection.preservesBehavior(before, droppedStructure));
+        JsonObject changedGoal = corrected.deepCopy(); changedGoal.addProperty("goal", "Craft any number of items");
+        assertFalse(AiPlanCorrection.preservesBehavior(before, changedGoal));
     }
 
     @Test void recurringValidationFailuresSurviveDraftRevisionChanges() {
@@ -45,11 +50,18 @@ class AiPassTwoTest {
             {"ok":false,"message":"repair","issues":[{"code":"same","message":"same issue"}],"draftRevision":1}
             """).getAsJsonObject();
         assertEquals(0, tracker.record("validate_graph", failed, 1));
+        assertEquals(0, tracker.record("apply_graph_commands", JsonParser.parseString("{\"ok\":true,\"message\":\"edit applied\"}").getAsJsonObject(), 2));
         failed.addProperty("draftRevision", 2);
-        assertEquals(1, tracker.record("validate_graph", failed, 2));
+        assertEquals(0, tracker.record("validate_graph", failed, 2));
+        assertEquals(1, tracker.repeatedValidationCount());
+        tracker.record("apply_graph_commands", JsonParser.parseString("{\"ok\":true,\"message\":\"another edit\"}").getAsJsonObject(), 3);
         failed.addProperty("message", "cosmetic wording");
         failed.addProperty("draftRevision", 3);
-        assertEquals(2, tracker.record("validate_graph", failed, 3));
+        assertEquals(0, tracker.record("validate_graph", failed, 3));
+        assertEquals(2, tracker.repeatedValidationCount());
+        var passed = JsonParser.parseString("{\"ok\":true,\"issues\":[]}").getAsJsonObject();
+        tracker.record("validate_graph", passed, 3);
+        assertEquals(0, tracker.repeatedValidationCount());
     }
     @Test void editsExtractedRoutineWithoutTouchingRootAndKeepsBodyReferences() {
         var created = routine(); assertTrue(created.success(), created.message());

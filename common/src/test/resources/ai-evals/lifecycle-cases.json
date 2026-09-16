@@ -46,5 +46,10 @@
     "prompt":"Yes—five blocks. Continue with that.",
     "context":{"messages":[{"role":"user","text":"After Jump, save my current position, move forward, then return there with pathfinding."},{"role":"assistant","text":"Should the movement be measured in blocks or seconds?"}]},
     "expected":{"outcome":"PROPOSAL","preserveFixture":true,"requiredNodes":{"START":1,"JUMP":1,"SET_VARIABLE":1,"SENSOR_POSITION_OF":1,"WALK":2,"PARAM_DISTANCE":1,"GOTO":1},"maxNodes":15,"parameters":[{"type":"PARAM_DISTANCE","name":"Distance","value":"5"}],"sequences":[["JUMP","SET_VARIABLE","WALK","GOTO"]]}
+  },
+  {
+    "id":"lifecycle-quantity-edit","difficulty":"regression","target":"current","fixture":"configured-inventory-action",
+    "prompt":"In the current preset, make the existing Craft step craft 8 oak planks rather than 4. Keep the item and the rest of the workflow unchanged.",
+    "expected":{"preserveStructure":true,"requiredNodes":{"START":1,"OPEN_INVENTORY":1,"CRAFT":1,"PARAM_ITEM":1,"CLOSE_GUI":1},"allowedNodes":["START","OPEN_INVENTORY","CRAFT","PARAM_ITEM","CLOSE_GUI"],"maxNodes":5,"parameters":[{"type":"CRAFT","name":"Amount","value":"8"},{"type":"PARAM_ITEM","name":"Item","value":"minecraft:oak_planks"}],"relations":[{"kind":"parameter","host":"CRAFT","child":"PARAM_ITEM","slot":0},{"kind":"flow","host":"OPEN_INVENTORY","child":"CRAFT"},{"kind":"flow","host":"CRAFT","child":"CLOSE_GUI"}]}
   }
 ]

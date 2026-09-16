@@ -9,18 +9,18 @@ import static org.junit.jupiter.api.Assertions.*;
 class AiBehaviorEvalTest {
     @Test void liveSelectionRejectsTyposAndSupportsExactWorkflowSamples() {
         var cases = AiBehaviorEvalCase.load();
-        assertEquals(7, AiBehaviorEvalRunner.select(cases, "regression", "", 67).size());
+        assertEquals(8, AiBehaviorEvalRunner.select(cases, "regression", "", 68).size());
         var selected = AiBehaviorEvalRunner.select(cases, "", "lifecycle-position-return", 1);
         assertEquals("lifecycle-position-return", selected.getFirst().id());
         assertThrows(IllegalArgumentException.class, () -> AiBehaviorEvalRunner.select(cases, "", "typo", 1));
         assertThrows(IllegalArgumentException.class, () -> AiBehaviorEvalRunner.select(cases, "unrecognized", "", 1));
     }
-    @Test void corpusHasSixtySevenUniqueRequestsAndValidFixtures() {
+    @Test void corpusHasSixtyEightUniqueRequestsAndValidFixtures() {
         var cases = AiBehaviorEvalCase.load();
-        assertEquals(67, cases.size());
-        assertEquals(67, cases.stream().map(AiBehaviorEvalCase::id).distinct().count());
-        assertEquals(67, cases.stream().map(AiBehaviorEvalCase::prompt).distinct().count());
-        assertEquals(7, cases.stream().filter(test -> test.difficulty().equals("regression")).count());
+        assertEquals(68, cases.size());
+        assertEquals(68, cases.stream().map(AiBehaviorEvalCase::id).distinct().count());
+        assertEquals(68, cases.stream().map(AiBehaviorEvalCase::prompt).distinct().count());
+        assertEquals(8, cases.stream().filter(test -> test.difficulty().equals("regression")).count());
         for (String difficulty : List.of("simple", "medium", "complex"))
             assertEquals(20, cases.stream().filter(test -> test.difficulty().equals(difficulty)).count());
         for (var test : cases) {
@@ -61,6 +61,18 @@ class AiBehaviorEvalTest {
         var grade = AiBehaviorEvalGrader.grade(test, proposal);
         assertTrue(grade.validationPassed());
         assertFalse(grade.behaviorPresent());
+    }
+    @Test void quantityEditFixtureGradesActualAmountAndPreservedStructure() {
+        var test = AiBehaviorEvalCase.load().stream().filter(item -> item.id().equals("lifecycle-quantity-edit"))
+            .findFirst().orElseThrow();
+        var graph = test.activeGraph();
+        var craft = graph.getNodes().stream().filter(node -> node.getType() == NodeType.CRAFT).findFirst().orElseThrow();
+        var proposal = new AiPresetService.Proposal("Quantity edit", "", List.of(), graph, "current");
+        assertFalse(AiBehaviorEvalGrader.grade(test, proposal).behaviorPresent());
+        craft.getParameters().stream().filter(parameter -> "amount".equals(parameter.getId())).findFirst().orElseThrow().setValue("8");
+        assertTrue(AiBehaviorEvalGrader.grade(test, proposal).passed());
+        graph.getConnections().clear();
+        assertFalse(AiBehaviorEvalGrader.grade(test, proposal).behaviorPresent());
     }
 
     @Test void ordinaryResponsesAreGradedForConcisenessButRequestedLongAnswersAreAllowed() {

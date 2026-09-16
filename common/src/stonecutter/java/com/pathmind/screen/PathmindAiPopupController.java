@@ -348,7 +348,9 @@ final class PathmindAiPopupController {
             progressLabel = progress.message();
             if (progress.completedTool() != null && !progress.completedTool().tool().equals("finish")) {
                 var step = progress.completedTool();
-                appendHistory(requestProvider, Role.DETAIL, (step.success() ? "✓ " : "! ") + step.tool() + ": " + step.message());
+                appendHistory(requestProvider, Role.DETAIL, (step.success() ? "✓ " : "! ") + "turn " + step.turn()
+                    + " " + step.tool() + (step.code().isBlank() ? "" : " [" + step.code() + "]")
+                    + " (draft " + step.revisionBefore() + "→" + step.revisionAfter() + "): " + step.message());
             }
         }));
         host.requestAiProposal(provider, submittedPrompt, priorContext, requestControl, value -> {

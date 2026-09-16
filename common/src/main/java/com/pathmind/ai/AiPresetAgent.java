@@ -165,6 +165,12 @@ public final class AiPresetAgent {
                 }
                 state.record("TOOL_RESULT", result.payload);
                 int stagnant = state.progressTracker.record(toolName, result.payload, state.draftRevision);
+                int repeatedValidation = state.progressTracker.repeatedValidationCount();
+                if (repeatedValidation >= 3) return CompletableFuture.failedFuture(new IllegalStateException(
+                    "AI could not resolve the same validation issues after multiple draft edits. No preset changes were applied."));
+                if (repeatedValidation == 2 && "validate_graph".equals(toolName) && state.pendingResult != null)
+                    state.pendingResult.addProperty("recoveryGuidance",
+                        "The same validation issues survived two repair rounds. Do not try another cosmetic edit or revalidation. Inspect the cited contracts and make a materially different correction.");
                 if (stagnant >= 9) return CompletableFuture.failedFuture(new IllegalStateException(
                     "AI stopped because repeated tool cycles added no new information or graph changes. No preset changes were applied."));
                 if (stagnant >= 6) state.record("TOOL_ERROR", codedError("stalled_cycle",
@@ -514,7 +520,7 @@ public final class AiPresetAgent {
         catch (RuntimeException failure) { return ToolResult.more(codedError("invalid_structural_requirement", failure.getMessage())); }
         plan.add("structuralRequirements", structural.deepCopy());
         if (correcting && !AiPlanCorrection.preservesBehavior(state.plan, plan))
-            return ToolResult.more(codedError("plan_correction_weakens_behavior", "Correction cannot remove or change typed outcome requirements. It may replace mistaken structural implementation requirements."));
+            return ToolResult.more(codedError("plan_correction_weakens_behavior", "Correction cannot change the goal, typed outcomes, structural kinds or required node types. Correct only implementation refs, scopes and sockets."));
         if (correcting) {
             state.planCorrections++;
             plan.addProperty("correctionReason", AiDisplayText.diagnostic(correctionReason));
@@ -850,7 +856,7 @@ public final class AiPresetAgent {
             + "Use the supplied node index instead of calling list_node_types unless the index is insufficient. Inspect all relevant contracts in one batched call. Prefer one coherent command batch when possible. After commands, validate and repair every error. Successful validation includes preview_execution output, so finish immediately unless repair is needed. "
             + "Never claim a tool succeeded until its result says ok. Do not reveal hidden reasoning; workLog contains only concise user-visible actions. "
             + "Use graphRef=null for the root graph, or a routine ID/alias on commands, focused queries and requirements to edit a routine body. Never connect nodes across graph scopes. bind_node_ref binds an inspected existing nodeId to an alias without editing; bind existing aliases before planning, rather than inventing unbound symbolic helper nodes. "
-            + "Record structuralRequirements for explicit nodes, ordered flow edges (ref,toRef,outputSocket,inputSocket) and action/sensor/parameter attachments (ref host,toRef child,slotIndex for parameter). Capture actual required relationships, not merely parameter values. After validation fails, plan_graph may replace a mistaken structural implementation plan with planCorrectionReason, at most twice; every typed outcome requirement must remain unchanged. Prefer repairing the draft or reference binding when the plan is sound. Declared checks still cannot prove complete intent extraction. "
+            + "Record structuralRequirements for explicit nodes, ordered flow edges (ref,toRef,outputSocket,inputSocket) and action/sensor/parameter attachments (ref host,toRef child,slotIndex for parameter). Capture actual required relationships, not merely parameter values. After validation fails, plan_graph may correct mistaken implementation refs, scopes, slots and sockets with planCorrectionReason, at most twice; the goal, structural kinds/node types, and every typed outcome must remain unchanged. Prefer repairing the draft or reference binding when the plan is sound. Declared checks still cannot prove complete intent extraction. "
             + "Runtime-dependent requirements are warnings, not evidence of incorrect behavior. Never describe unverified values as verified. Internal validation or reference errors are repairable and cannot establish a user-facing blocker. ";
         if (capabilities != null && capabilities.nativeFunctionTools())
             return prompt + "Use exactly one native function per turn with only the fields in its function schema. Never emit a JSON action envelope as plain text.";

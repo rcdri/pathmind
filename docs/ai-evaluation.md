@@ -1,6 +1,6 @@
 # AI evaluation and provider sessions
 
-The versioned corpus has 67 requests: 20 simple, 20 medium, 20 complex, and seven
+The versioned corpus has 68 requests: 20 simple, 20 medium, 20 complex, and eight
 lifecycle regressions for the reported workflow and conversation/context risks.
 It covers actions, repeats, conditions, branches, fork/join, parameter cards,
 variables/lists, routines/arguments, current-preset editing, and inspection.
@@ -25,10 +25,11 @@ The harness does not read the player's encrypted keys. Set a model explicitly:
 
 Provider values: `OPENAI`, `ANTHROPIC`, `GEMINI`, `OPENAI_COMPATIBLE`.
 Optional `-PaiEvalDifficulty=simple|medium|complex|regression` filters before the limit.
-Increase `-PaiEvalLimit=67` to run the entire corpus. Repeat separately for each model
+Increase `-PaiEvalLimit=68` to run the entire corpus. Repeat separately for each model
 and difficulty; reports identify both provider and model. A filtered run is a sample,
 not a full-corpus result. `-PaiEvalEndpoint=URL` overrides the endpoint.
-Use `-PaiEvalCases=lifecycle-position-return` to select exact case IDs (comma-separated).
+Use `-PaiEvalCases=lifecycle-position-return` or `-PaiEvalCases=lifecycle-quantity-edit`
+to select exact case IDs (comma-separated).
 Unknown IDs/empty filters fail explicitly. `-PaiEvalRepeats=3` repeats each case with
 fresh fixtures/sessions (1–10). Reports identify every repetition and corpus version 2.
 Offline aiEval checks corpus/selection only, not model quality; use tests for scripted regressions.
@@ -54,6 +55,9 @@ routine signatures, message text, unexpected/disconnected nodes, and node budget
 Inspection cases check response concepts and absence of graph changes.
 Lifecycle grading adds outcome, response length, preserved fixture semantics/connections,
 ordered flow, shared variable bindings, and required successful inspection tools.
+The quantity-edit case requires the existing workflow and attached item to remain,
+while the Craft amount changes from four to eight. This is evaluation data, not
+a node-specific production instruction.
 The reported workflow preserves the old five-second Walk → Jump, then captures Self XYZ,
 walks five **blocks**, and returns through the same saved variable. Valid-but-wrong
 seconds, variable, and action-order mutations must fail behavioral grading.
@@ -89,6 +93,9 @@ and [Gemini function declarations](https://ai.google.dev/api/generate-content#Fu
 Production requests record numeric telemetry in a bounded in-memory ring of 100 runs.
 Failed requests also report metrics; each run has a four-minute budget in addition
 to the existing tool-turn/progress limits. No persistent player telemetry upload exists.
+The local chat archive now retains application-authored tool detail with turn number,
+error code, and draft revision until the user resets that provider's chat. It does
+not save provider reasoning, raw tool arguments, API keys, or full request bodies.
 
 ### User chat archive
 

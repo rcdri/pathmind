@@ -75,7 +75,7 @@ public final class AiAgentTurnSchema {
             property("requestIntent", described(nullable(enumString("discuss", "diagnose", "build", "edit", "clarify")), "Classify the latest request separately from graph scope. Set on the first useful call; null afterwards.")),
             property("intentEvidence", described(nullable(string()), "Exact quote from the latest USER_REQUEST supporting intent, never historical context.")),
             property("planGoal", described(nullable(string()), "Concise desired graph behavior for plan_graph.")),
-            property("planCorrectionReason", described(nullable(string()), "After failed validation only: explain the mistaken implementation plan being corrected. Preserve every typed outcome requirement; structural implementation requirements may be replaced.")),
+            property("planCorrectionReason", described(nullable(string()), "After failed validation only: explain the mistaken implementation refs, scopes or sockets being corrected. Preserve goal, structural kinds/node types and every typed outcome.")),
             property("planSteps", described(array(string()), "One to eight short structural steps; never hidden reasoning.")),
             property("planNodeTypes", described(array(enumValues(NodeType.values())), "Catalog types expected by the structural plan.")),
             property("planStructures", described(array(enumString("sequence", "repeat", "condition", "branch", "variable",

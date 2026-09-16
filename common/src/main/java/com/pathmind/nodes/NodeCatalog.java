@@ -84,6 +84,7 @@ public final class NodeCatalog {
             NodeType.SENSOR_HUNGER_BELOW,
             NodeType.SENSOR_ITEM_IN_INVENTORY,
             NodeType.SENSOR_ITEM_IN_SLOT,
+            NodeType.SENSOR_SLOT_FILLED,
             NodeType.SENSOR_SLOT_ITEM_COUNT,
             NodeType.SENSOR_DURABILITY_OF,
             NodeType.SENSOR_FIND_TRADE,

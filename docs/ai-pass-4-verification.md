@@ -18,7 +18,7 @@ and recent chat subordinate to fresh graph state.
 
 ```sh
 ./gradlew test
-./gradlew :common:aiEval -PaiEvalDifficulty=regression -PaiEvalLimit=7
+./gradlew :common:aiEval -PaiEvalDifficulty=regression -PaiEvalLimit=8
 ```
 
 JUnit results are in `common/build/reports/tests/test/index.html` and
@@ -34,11 +34,13 @@ and choose a model explicitly; don't paste keys in chat. Live calls incur charge
 ```sh
 ./gradlew :common:aiEval -PaiEvalLive=true -PaiEvalProvider=OPENAI \
   -PaiEvalModel=YOUR_MODEL -PaiEvalDifficulty=regression \
-  -PaiEvalLimit=7 -PaiEvalRepeats=1
+  -PaiEvalLimit=8 -PaiEvalRepeats=1
 ```
 
 Start small, then repeat with `-PaiEvalRepeats=3` across matched providers/models.
 Use `-PaiEvalCases=lifecycle-position-return` for only the reported workflow.
+Use `-PaiEvalCases=lifecycle-quantity-edit -PaiEvalLimit=1` for the reported
+four-to-eight Craft edit. Both require explicit live opt-in and incur charges.
 Reports record case/repetition, structural failures, trace/turns/repairs, latency,
 token usage, and optional estimated cost. Missing usage/pricing is unknown, not zero.
 Reports identify their evidence as live-provider structural grading, not world execution.
@@ -70,6 +72,10 @@ benchmark graphs in an important world/server.
 7. Request a long multiline explanation. Resize/scroll, expand Details, and use Latest.
    Require complete text and stable reading position. Reopen editor/game and verify
    chat-history persistence and the stated reset behavior.
+8. With an existing Craft step that uses an attached item reporter, ask to change only
+   the amount from four to eight. Require a reviewable proposal with amount eight,
+   the same item and wiring, and no extra nodes. After Apply, verify the saved graph
+   and a real crafting run in a disposable world with sufficient ingredients.
 
 Record build, Minecraft version, provider/model, case/repetition, observations, and
 failures. Mark live/world checks passed only after observing them. Model and world

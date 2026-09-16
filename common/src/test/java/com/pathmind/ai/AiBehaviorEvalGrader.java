@@ -76,6 +76,19 @@ final class AiBehaviorEvalGrader {
                     failures.add("Original flow connection removed.");
             }
         }
+        if (expected.has("preserveStructure") && expected.get("preserveStructure").getAsBoolean()) {
+            var original = test.activeGraph();
+            if (original == null || original.getNodes().size() != proposal.graph().getNodes().size())
+                failures.add("Original node count changed.");
+            else for (var old : original.getNodes()) {
+                var retained = proposal.graph().getNodes().stream().filter(n -> old.getId().equals(n.getId())).findFirst();
+                if (retained.isEmpty() || !structuralNode(old).equals(structuralNode(retained.get())))
+                    failures.add("Original node structure changed: " + old.getId());
+            }
+            if (original != null && !new com.google.gson.Gson().toJsonTree(original.getConnections())
+                .equals(new com.google.gson.Gson().toJsonTree(proposal.graph().getConnections())))
+                failures.add("Original flow connections changed.");
+        }
         for (var element : array(expected, "sequences")) {
             List<String> types = new ArrayList<>(); for (var type : element.getAsJsonArray()) types.add(type.getAsString());
             if (reachable.stream().noneMatch(node -> sequenceMatches(node.graph(), node.node(), types, 0))) failures.add("Missing ordered flow: " + types);
@@ -146,6 +159,9 @@ final class AiBehaviorEvalGrader {
 
     private static JsonObject semanticNode(NodeGraphData.NodeData node) {
         var json = new com.google.gson.Gson().toJsonTree(node).getAsJsonObject(); json.remove("x"); json.remove("y"); return json;
+    }
+    private static JsonObject structuralNode(NodeGraphData.NodeData node) {
+        var json = semanticNode(node); json.remove("parameters"); return json;
     }
     private static boolean sequenceMatches(NodeGraphData graph, NodeGraphData.NodeData node, List<String> types, int index) {
         if (types.isEmpty() || node.getType() == null || !types.get(index).equals(node.getType().name())) return false;
