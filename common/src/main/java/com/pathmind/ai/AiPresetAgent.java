@@ -16,6 +16,14 @@ import java.util.concurrent.CompletableFuture;
 /** Runs model-selected tools against an isolated graph draft, never the live editor graph. */
 public final class AiPresetAgent {
     static final int MAX_TURNS = 20;
+    /**
+     * Wall-clock budget for a single provider call, not for the whole run.
+     *
+     * <p>Slow inference spends minutes generating one large tool call, and a run-wide cap punished
+     * that by killing progress that was still being made. Bounding each turn instead lets a slow
+     * model finish; MAX_TURNS remains the bound on total work, and the stop button still cancels.</p>
+     */
+    static final int TURN_BUDGET_MINUTES = 10;
     private static final int MAX_CONSECUTIVE_FAILURES = 5;
     private static final int MAX_TRANSCRIPT_CHARS = 140_000;
     private static final Gson GSON = new Gson();
@@ -70,7 +78,7 @@ public final class AiPresetAgent {
             state.session.close();
             cancellableWork.completeExceptionally(new java.util.concurrent.CancellationException("AI request cancelled."));
         });
-        return work.orTimeout(4, java.util.concurrent.TimeUnit.MINUTES).handle((proposal, failure) -> {
+        return work.handle((proposal, failure) -> {
             state.closed = true;
             state.session.close();
             state.control.release();
@@ -83,7 +91,7 @@ public final class AiPresetAgent {
                 Throwable cause = failure;
                 while (cause.getCause() != null && cause instanceof java.util.concurrent.CompletionException) cause = cause.getCause();
                 message = state.control.isCancelled() ? "AI request cancelled. No preset changes were applied."
-                    : cause instanceof java.util.concurrent.TimeoutException ? "AI exceeded its four-minute request budget."
+                    : cause instanceof java.util.concurrent.TimeoutException ? "AI exceeded its " + TURN_BUDGET_MINUTES + "-minute budget for a single turn."
                     : AiDisplayText.diagnostic(cause.getMessage());
                 if (message.isBlank()) message = "AI request failed.";
             }
@@ -107,7 +115,9 @@ public final class AiPresetAgent {
         if (state.turn == 1) state.progress(AiRequestProgress.Stage.THINKING, "Understanding your request", null);
         AiPresetRequest request = new AiPresetRequest(systemPrompt(state.provider.capabilities()), state.prompt(), state.model,
             "pathmind_agent_action", AiAgentTurnSchema.create());
-        return state.session.generate(request, state.pendingResult).thenCompose(turn -> {
+        return state.session.generate(request, state.pendingResult)
+            .orTimeout(TURN_BUDGET_MINUTES, java.util.concurrent.TimeUnit.MINUTES)
+            .thenCompose(turn -> {
             if (state.closed) return CompletableFuture.failedFuture(new IllegalStateException("AI request is closed."));
             state.usages.add(turn.usage());
             state.currentTool = "invalid_response";

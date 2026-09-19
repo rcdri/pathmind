@@ -18,7 +18,10 @@ interface AiJsonTransport {
     static AiJsonTransport http() {
         HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(15)).build();
         return (endpoint, headers, body) -> {
-            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(endpoint)).timeout(Duration.ofSeconds(75))
+            // Must outlast the agent's per-turn budget, otherwise this fires first and reports a
+            // network failure instead of the clearer budget message. One minute of headroom.
+            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(endpoint))
+                .timeout(Duration.ofMinutes(AiPresetAgent.TURN_BUDGET_MINUTES + 1))
                 .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body.toString()));
             headers.forEach(builder::header);
             var network = client.sendAsync(builder.build(), HttpResponse.BodyHandlers.ofString());
