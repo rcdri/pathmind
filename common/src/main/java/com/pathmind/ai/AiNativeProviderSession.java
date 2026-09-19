@@ -204,7 +204,7 @@ final class AiNativeProviderSession implements AiProviderSession {
             } else if (dialect == Dialect.OPENAI_CHAT) {
                 JsonObject choice = response.getAsJsonArray("choices").get(0).getAsJsonObject();
                 JsonObject message = choice.getAsJsonObject("message");
-                history.add(message.deepCopy()); // Replay reasoning_details and tool_calls unchanged.
+                history.add(replayableAssistant(message));
                 if (message.has("tool_calls") && !message.get("tool_calls").isJsonNull()) {
                     for (JsonElement item : message.getAsJsonArray("tool_calls")) {
                         JsonObject call = item.getAsJsonObject();
@@ -327,6 +327,21 @@ final class AiNativeProviderSession implements AiProviderSession {
             message.add(dialect == Dialect.ANTHROPIC ? "content" : "parts", blocks);
             input.add(message);
         }
+    }
+
+    /**
+     * The assistant turn as it goes back on the wire.
+     *
+     * <p>Reasoning payloads are dropped. Chat Completions does not need them to continue a tool
+     * conversation, unlike the Responses API, and a reasoning model emits an unbounded amount of
+     * them; replaying every turn's thinking exhausted the session history budget within a dozen
+     * turns. {@code tool_calls} must survive so the following tool results still pair by call id.</p>
+     */
+    private static JsonObject replayableAssistant(JsonObject message) {
+        JsonObject replay = message.deepCopy();
+        replay.remove("reasoning");
+        replay.remove("reasoning_details");
+        return replay;
     }
 
     private JsonObject userMessage(String text) {

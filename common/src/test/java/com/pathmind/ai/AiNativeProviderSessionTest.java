@@ -118,7 +118,19 @@ class AiNativeProviderSessionTest {
           "usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":40}}}
         """;
 
-    @Test void openAiChatReplaysAssistantReasoningAndPairsToolCallIds() {
+    @Test void openAiChatDropsReasoningFromReplayedHistoryButKeepsToolCalls() {
+        List<JsonObject> bodies = new ArrayList<>();
+        var session = session(AiNativeProviderSession.Dialect.OPENAI_CHAT, bodies, OPENAI_CHAT, false);
+        session.generate(REQUEST, null).join();
+        session.generate(REQUEST, RESULT).join();
+        var assistant = bodies.get(1).getAsJsonArray("messages").get(2).getAsJsonObject();
+        // Unbounded per-turn reasoning would otherwise exhaust the session history budget.
+        assertFalse(assistant.has("reasoning_details"));
+        assertFalse(assistant.has("reasoning"));
+        assertEquals("call-1", assistant.getAsJsonArray("tool_calls").get(0).getAsJsonObject().get("id").getAsString());
+    }
+
+    @Test void openAiChatPairsToolCallIds() {
         List<JsonObject> bodies = new ArrayList<>();
         var session = session(AiNativeProviderSession.Dialect.OPENAI_CHAT, bodies, OPENAI_CHAT, false);
         var first = session.generate(REQUEST, null).join();
@@ -129,9 +141,6 @@ class AiNativeProviderSessionTest {
         var messages = bodies.get(1).getAsJsonArray("messages");
         assertEquals("system", messages.get(0).getAsJsonObject().get("role").getAsString());
         assertEquals("request", messages.get(1).getAsJsonObject().get("content").getAsString());
-        // Assistant turns replay verbatim so provider-side reasoning payloads survive the round trip.
-        assertEquals("opaque", messages.get(2).getAsJsonObject().getAsJsonArray("reasoning_details")
-            .get(0).getAsJsonObject().get("data").getAsString());
         var toolMessage = messages.get(3).getAsJsonObject();
         assertEquals("tool", toolMessage.get("role").getAsString());
         assertEquals("call-1", toolMessage.get("tool_call_id").getAsString());
