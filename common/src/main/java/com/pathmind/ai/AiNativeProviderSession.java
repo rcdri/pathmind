@@ -102,7 +102,9 @@ final class AiNativeProviderSession implements AiProviderSession {
             } else body.add("input", history.deepCopy());
         } else if (dialect == Dialect.OPENAI_CHAT) {
             body.addProperty("model", request.model());
-            body.addProperty("max_tokens", 6000);
+            // No max_tokens: a reasoning model spends its thinking inside this budget, and capping it
+            // truncates mid-tool-call. The provider default is the model's own maximum, and the model
+            // stops on its own once the call is emitted.
             body.addProperty("parallel_tool_calls", false);
             body.addProperty("tool_choice", "required");
             // Chat Completions has no separate instructions field, so the system prompt leads every
