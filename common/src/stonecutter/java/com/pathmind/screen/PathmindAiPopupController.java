@@ -443,7 +443,10 @@ final class PathmindAiPopupController {
         if ((keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) && activeField == Field.PROMPT) { if ((modifiers & GLFW.GLFW_MOD_SHIFT) != 0) insertPromptText("\n"); else activateAction(); return true; }
         return activeField != Field.NONE;
     }
-    boolean charTyped(char character) { if (!visible || activeField == Field.NONE || Character.isISOControl(character)) return visible; type(character); return true; }
+    // Decline characters unless a field actually has focus. The popup is non-modal and the editor
+    // routes charTyped to it before the preset and rename controllers, so consuming while unfocused
+    // silently kills every other text input on the screen. keyPressed already declines this way.
+    boolean charTyped(char character) { if (!visible || activeField == Field.NONE || Character.isISOControl(character)) return false; type(character); return true; }
 
     private void activateAction() {
         if (requesting) return;
