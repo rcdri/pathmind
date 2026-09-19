@@ -15,13 +15,12 @@ import java.util.concurrent.CompletableFuture;
 
 /** Runs model-selected tools against an isolated graph draft, never the live editor graph. */
 public final class AiPresetAgent {
-    static final int MAX_TURNS = 20;
     /**
      * Wall-clock budget for a single provider call, not for the whole run.
      *
      * <p>Slow inference spends minutes generating one large tool call, and a run-wide cap punished
      * that by killing progress that was still being made. Bounding each turn instead lets a slow
-     * model finish; MAX_TURNS remains the bound on total work, and the stop button still cancels.</p>
+     * model finish. The session's history budget and the stop button bound total work.</p>
      */
     static final int TURN_BUDGET_MINUTES = 10;
     private static final int MAX_CONSECUTIVE_FAILURES = 5;
@@ -108,9 +107,6 @@ public final class AiPresetAgent {
 
     private static CompletableFuture<AiPresetService.Proposal> next(State state) {
         if (state.closed || state.control.isCancelled()) return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("AI request is closed."));
-        if (state.turn >= MAX_TURNS) {
-            return CompletableFuture.failedFuture(new IllegalStateException("AI stopped after " + MAX_TURNS + " tool turns without producing a valid proposal."));
-        }
         state.turn++;
         if (state.turn == 1) state.progress(AiRequestProgress.Stage.THINKING, "Understanding your request", null);
         AiPresetRequest request = new AiPresetRequest(systemPrompt(state.provider.capabilities()), state.prompt(), state.model,
