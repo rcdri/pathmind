@@ -745,7 +745,7 @@ final class PathmindAiPopupController {
         return AnimationHelper.lerpColor(UITheme.TEXT_SECONDARY, UITheme.TEXT_HEADER, AnimationHelper.easeOutQuad(progress));
     }
     private static AiProviderType[] supportedProviders() { return new AiProviderType[]{AiProviderType.OPENAI, AiProviderType.ANTHROPIC, AiProviderType.GEMINI, AiProviderType.OPENROUTER}; }
-    private static String tabLabel(AiProviderType provider) { return switch (provider) { case OPENAI -> "GPT"; case ANTHROPIC -> "Claude"; case GEMINI -> "Gemini"; case OPENROUTER -> "Router"; default -> provider.displayName(); }; }
+    private static String tabLabel(AiProviderType provider) { return switch (provider) { case OPENAI -> "GPT"; case ANTHROPIC -> "Claude"; case GEMINI -> "Gemini"; case OPENROUTER -> "ORouter"; default -> provider.displayName(); }; }
     private static void DrawBorder(GuiGraphics c, int bx, int by, int bw, int bh, int color) { c.hLine(bx, bx + bw - 1, by, color); c.hLine(bx, bx + bw - 1, by + bh - 1, color); c.vLine(bx, by, by + bh - 1, color); c.vLine(bx + bw - 1, by, by + bh - 1, color); }
     private static boolean contains(int px, int py, int bx, int by, int bw, int bh) { return px >= bx && px < bx + bw && py >= by && py < by + bh; }
     private static int clamp(int value, int min, int max) { return Math.max(min, Math.min(max, value)); }
